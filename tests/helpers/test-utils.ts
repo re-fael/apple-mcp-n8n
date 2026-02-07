@@ -1,10 +1,49 @@
 import { run } from "@jxa/run";
 import { runAppleScript } from "run-applescript";
+import { createRequire } from "node:module";
 import { TEST_DATA } from "../fixtures/test-data.js";
 
 export interface TestDataManager {
   setupTestData: () => Promise<void>;
   cleanupTestData: () => Promise<void>;
+}
+
+const require = createRequire(import.meta.url);
+
+function loadEventKit() {
+  try {
+    return require("eventkit-node");
+  } catch (error) {
+    throw new Error(
+      "eventkit-node is not installed or failed to load. Run npm install eventkit-node.",
+    );
+  }
+}
+
+async function ensureCalendarAccess() {
+  const ek = loadEventKit();
+  const granted = await ek.requestFullAccessToEvents();
+  if (!granted) {
+    throw new Error("Calendar access denied");
+  }
+  return ek;
+}
+
+function getCalendarId(calendar: any): string | undefined {
+  return (
+    calendar?.identifier ||
+    calendar?.id ||
+    calendar?.calendarIdentifier ||
+    undefined
+  );
+}
+
+function getCalendarTitle(calendar: any): string {
+  return String(calendar?.title ?? calendar?.name ?? "");
+}
+
+function getEventId(event: any): string | undefined {
+  return event?.identifier || event?.id || event?.eventIdentifier || undefined;
 }
 
 export function createTestDataManager(): TestDataManager {
@@ -106,19 +145,40 @@ end tell`;
 
 async function setupTestCalendar(): Promise<void> {
   try {
-    const script = `
-tell application "Calendar"
-    set existingCalendars to (every calendar whose name is "${TEST_DATA.CALENDAR.calendarName}")
-    
-    if (count of existingCalendars) is 0 then
-        make new calendar with properties {name:"${TEST_DATA.CALENDAR.calendarName}"}
-        return "Created test calendar"
-    else
-        return "Test calendar already exists"
-    end if
-end tell`;
-    
-    await runAppleScript(script);
+    const ek = await ensureCalendarAccess();
+    const calendars = ek.getCalendars("event") ?? [];
+    const existing = calendars.find(
+      (calendar: any) =>
+        getCalendarTitle(calendar).toLowerCase() ===
+        TEST_DATA.CALENDAR.calendarName.toLowerCase(),
+    );
+    if (existing) {
+      return;
+    }
+
+    // Try to create a test calendar using the default calendar source
+    const defaultCalendar =
+      ek.getDefaultCalendarForNewEvents?.() ?? calendars[0];
+    const sourceId =
+      defaultCalendar?.sourceId ||
+      defaultCalendar?.sourceIdentifier ||
+      defaultCalendar?.source?.id ||
+      defaultCalendar?.source?.identifier ||
+      undefined;
+
+    if (!sourceId) {
+      console.warn(
+        "Could not determine calendar source; skipping test calendar creation.",
+      );
+      return;
+    }
+
+    const calendarData: any = {
+      title: TEST_DATA.CALENDAR.calendarName,
+      sourceId,
+    };
+
+    ek.saveCalendar(calendarData, true);
   } catch (error) {
     console.warn("Could not set up test calendar:", error);
   }
@@ -182,24 +242,57 @@ end tell`;
 
 async function cleanupTestCalendarEvents(): Promise<void> {
   try {
-    const script = `
-tell application "Calendar"
-    set testCalendars to (every calendar whose name is "${TEST_DATA.CALENDAR.calendarName}")
-    
-    repeat with testCalendar in testCalendars
-        try
-            delete testCalendar
-        on error
-            -- Calendar deletion might fail due to system restrictions
-            -- Just clear events instead
-            delete (every event of testCalendar)
-        end try
-    end repeat
-    
-    return "Test calendar cleaned up"
-end tell`;
-    
-    await runAppleScript(script);
+    const ek = await ensureCalendarAccess();
+    const calendars = ek.getCalendars("event") ?? [];
+
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setDate(startDate.getDate() - 7);
+    const endDate = new Date(now);
+    endDate.setDate(endDate.getDate() + 45);
+
+    const predicate = ek.createEventPredicate(startDate, endDate);
+    const events = ek.getEventsWithPredicate(predicate) ?? [];
+
+    const prefixes = [
+      "Claude Test Event",
+      "All Day Test Event",
+      "Specific Calendar Event",
+      "Searchable Test Event",
+      "Past Event Test",
+      "Invalid Date Test",
+      "Invalid Time Range Test",
+      "Scenario Event",
+    ];
+
+    for (const event of events) {
+      const title = String(event?.title ?? event?.summary ?? "");
+      if (!prefixes.some((prefix) => title.startsWith(prefix))) {
+        continue;
+      }
+      const eventId = getEventId(event);
+      if (!eventId) continue;
+      try {
+        ek.removeEvent(eventId, 0, true);
+      } catch (removeError) {
+        console.warn("Failed to remove test event:", removeError);
+      }
+    }
+
+    // Remove the test calendar if it exists
+    const testCalendar = calendars.find(
+      (calendar: any) =>
+        getCalendarTitle(calendar).toLowerCase() ===
+        TEST_DATA.CALENDAR.calendarName.toLowerCase(),
+    );
+    const calendarId = testCalendar ? getCalendarId(testCalendar) : undefined;
+    if (calendarId) {
+      try {
+        ek.removeCalendar(calendarId, true);
+      } catch (removeCalendarError) {
+        console.warn("Failed to remove test calendar:", removeCalendarError);
+      }
+    }
   } catch (error) {
     console.warn("Could not clean up test calendar:", error);
   }

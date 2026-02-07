@@ -1,365 +1,560 @@
-import { runAppleScript } from 'run-applescript';
+import { createRequire } from "node:module";
+import { logCalendar } from "./logger.js";
+
+const require = createRequire(import.meta.url);
+
+const CONFIG = {
+	MAX_EVENTS: 50,
+};
+const CALENDAR_ENV = {
+	INCOMING: "APPLE_MCP_CALENDAR_INCOMING",
+	OUTGOING: "APPLE_MCP_CALENDAR_OUTGOING",
+} as const;
 
 // Define types for our calendar events
 interface CalendarEvent {
-    id: string;
-    title: string;
-    location: string | null;
-    notes: string | null;
-    startDate: string | null;
-    endDate: string | null;
-    calendarName: string;
-    isAllDay: boolean;
-    url: string | null;
+	id: string;
+	title: string;
+	location: string | null;
+	notes: string | null;
+	startDate: string | null;
+	endDate: string | null;
+	calendarName: string;
+	isAllDay: boolean;
+	url: string | null;
 }
 
-// Configuration for timeouts and limits
-const CONFIG = {
-    // Maximum time (in ms) to wait for calendar operations
-    TIMEOUT_MS: 10000,
-    // Maximum number of events to return
-    MAX_EVENTS: 20
+let eventkitModule: any | null = null;
+
+function loadEventKit(): any {
+	if (eventkitModule) return eventkitModule;
+	try {
+		eventkitModule = require("eventkit-node");
+		return eventkitModule;
+	} catch (error) {
+		throw new Error(
+			"eventkit-node is not installed or failed to load. Install it with npm install eventkit-node and ensure Xcode Command Line Tools are available.",
+		);
+	}
+}
+
+async function ensureCalendarAccess(): Promise<any> {
+	const ek = loadEventKit();
+	const granted = await ek.requestFullAccessToEvents();
+	if (!granted) {
+		throw new Error(
+			"Calendar access was denied. Ensure Calendar permissions are granted in System Settings.",
+		);
+	}
+	return ek;
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_TIMESTAMP =
+	/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+function normalizeDateInput(value: unknown, fieldName: string): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (value instanceof Date && !Number.isNaN(value.getTime())) {
+		return value.toISOString();
+	}
+	if (typeof value !== "string") {
+		throw new Error(
+			`${fieldName} must be a string in ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ)`,
+		);
+	}
+
+	const raw = value.trim();
+	if (!raw) {
+		throw new Error(
+			`${fieldName} must be a non-empty string in ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ)`,
+		);
+	}
+
+	if (DATE_ONLY.test(raw) || ISO_TIMESTAMP.test(raw)) {
+		return raw;
+	}
+
+	throw new Error(
+		`${fieldName} must be ISO 8601 (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ). Received: "${raw}"`,
+	);
+}
+
+function parseDateInput(value: string, fieldName: string): Date {
+	if (DATE_ONLY.test(value)) {
+		const [year, month, day] = value.split("-").map(Number);
+		return new Date(year, month - 1, day, 0, 0, 0);
+	}
+	const parsed = new Date(value);
+	if (Number.isNaN(parsed.getTime())) {
+		throw new Error(
+			`${fieldName} must be ISO 8601 (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ). Received: "${value}"`,
+		);
+	}
+	return parsed;
+}
+
+function endOfDay(date: Date): Date {
+	return new Date(
+		date.getFullYear(),
+		date.getMonth(),
+		date.getDate(),
+		23,
+		59,
+		59,
+		999,
+	);
+}
+
+function getCalendarTitle(calendar: any): string {
+	return String(calendar?.title ?? calendar?.name ?? "");
+}
+
+function getEventCalendarName(event: any): string {
+	return (
+		getCalendarTitle(event?.calendar) ||
+		String(event?.calendarTitle ?? event?.calendarName ?? "")
+	);
+}
+
+function getCalendarId(calendar: any): string {
+	return String(
+		calendar?.identifier ??
+			calendar?.id ??
+			calendar?.calendarIdentifier ??
+			"",
+	);
+}
+
+type CalendarLock = {
+	incoming: string;
+	outgoing: string;
+	allowedLower: Set<string>;
 };
 
-/**
- * Check if the Calendar app is accessible
- */
-async function checkCalendarAccess(): Promise<boolean> {
-    try {
-        const script = `
-tell application "Calendar"
-    return name
-end tell`;
-        
-        await runAppleScript(script);
-        return true;
-    } catch (error) {
-        console.error(`Cannot access Calendar app: ${error instanceof Error ? error.message : String(error)}`);
-        return false;
-    }
+function getCalendarLock(): CalendarLock {
+	const incoming = process.env[CALENDAR_ENV.INCOMING]?.trim() ?? "";
+	const outgoing = process.env[CALENDAR_ENV.OUTGOING]?.trim() ?? "";
+
+	if (!incoming || !outgoing) {
+		throw new Error(
+			`Calendar operations are disabled. Set ${CALENDAR_ENV.INCOMING} and ${CALENDAR_ENV.OUTGOING}.`,
+		);
+	}
+
+	return {
+		incoming,
+		outgoing,
+		allowedLower: new Set([incoming.toLowerCase(), outgoing.toLowerCase()]),
+	};
 }
 
-/**
- * Request Calendar app access and provide instructions if not available
- */
-async function requestCalendarAccess(): Promise<{ hasAccess: boolean; message: string }> {
-    try {
-        // First check if we already have access
-        const hasAccess = await checkCalendarAccess();
-        if (hasAccess) {
-            return {
-                hasAccess: true,
-                message: "Calendar access is already granted."
-            };
-        }
-
-        // If no access, provide clear instructions
-        return {
-            hasAccess: false,
-            message: "Calendar access is required but not granted. Please:\n1. Open System Settings > Privacy & Security > Automation\n2. Find your terminal/app in the list and enable 'Calendar'\n3. Alternatively, open System Settings > Privacy & Security > Calendars\n4. Add your terminal/app to the allowed applications\n5. Restart your terminal and try again"
-        };
-    } catch (error) {
-        return {
-            hasAccess: false,
-            message: `Error checking Calendar access: ${error instanceof Error ? error.message : String(error)}`
-        };
-    }
+function findCalendarByName(calendars: any[], name: string): any | null {
+	const nameLower = name.trim().toLowerCase();
+	if (!nameLower) return null;
+	return (
+		calendars.find(
+			(calendar: any) => getCalendarTitle(calendar).toLowerCase() === nameLower,
+		) ?? null
+	);
 }
 
-/**
- * Get calendar events in a specified date range
- * @param limit Optional limit on the number of results (default 10)
- * @param fromDate Optional start date for search range in ISO format (default: today)
- * @param toDate Optional end date for search range in ISO format (default: 7 days from now)
- */
+function resolveLockedCalendars(ek: any, lock: CalendarLock): {
+	calendars: any[];
+	incomingCalendar: any;
+	outgoingCalendar: any;
+} {
+	const calendars = ek.getCalendars("event") ?? [];
+	const incomingCalendar = findCalendarByName(calendars, lock.incoming);
+	if (!incomingCalendar) {
+		throw new Error(`Incoming calendar "${lock.incoming}" not found.`);
+	}
+
+	let outgoingCalendar = incomingCalendar;
+	if (lock.outgoing.toLowerCase() !== lock.incoming.toLowerCase()) {
+		outgoingCalendar = findCalendarByName(calendars, lock.outgoing);
+		if (!outgoingCalendar) {
+			throw new Error(`Outgoing calendar "${lock.outgoing}" not found.`);
+		}
+	}
+
+	return { calendars, incomingCalendar, outgoingCalendar };
+}
+
+function isCalendarLockError(message: string): boolean {
+	return (
+		message.includes("Calendar operations are disabled") ||
+		message.includes("Incoming calendar") ||
+		message.includes("Outgoing calendar") ||
+		message.includes("not allowed")
+	);
+}
+
+function normalizeEventDate(value: any): string | null {
+	if (!value) return null;
+	const date = value instanceof Date ? value : new Date(value);
+	if (Number.isNaN(date.getTime())) return null;
+	return date.toISOString();
+}
+
+function mapEvent(event: any, fallbackCalendarName: string): CalendarEvent {
+	const calendarName =
+		(event?.calendar && getCalendarTitle(event.calendar)) ||
+		String(event?.calendarTitle ?? event?.calendarName ?? "") ||
+		fallbackCalendarName;
+
+	const urlValue = event?.url ?? event?.URL ?? null;
+	const url = urlValue ? String(urlValue) : null;
+
+	return {
+		id: String(
+			event?.identifier ??
+				event?.id ??
+				event?.eventIdentifier ??
+				`unknown-${Date.now()}`,
+		),
+		title: String(event?.title ?? event?.summary ?? event?.name ?? "Untitled Event"),
+		location: event?.location ? String(event.location) : null,
+		notes: event?.notes ? String(event.notes) : null,
+		startDate: normalizeEventDate(event?.startDate ?? event?.start),
+		endDate: normalizeEventDate(event?.endDate ?? event?.end),
+		calendarName: calendarName || "Calendar",
+		isAllDay: Boolean(event?.isAllDay ?? event?.allDay ?? false),
+		url,
+	};
+}
+
+async function listCalendars(): Promise<string[]> {
+	try {
+		const lock = getCalendarLock();
+		const ek = await ensureCalendarAccess();
+		logCalendar("listCalendars start");
+		const { incomingCalendar, outgoingCalendar } = resolveLockedCalendars(ek, lock);
+		const names = Array.from(
+			new Set(
+				[incomingCalendar, outgoingCalendar]
+					.map((calendar) => getCalendarTitle(calendar))
+					.filter((name) => name.length > 0),
+			),
+		);
+		logCalendar("listCalendars result", { count: names.length });
+		return names;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(`Error listing calendars: ${message}`);
+		logCalendar("listCalendars error", { error: message });
+		if (isCalendarLockError(message)) {
+			throw new Error(message);
+		}
+		return [];
+	}
+}
+
 async function getEvents(
-    limit = 10, 
-    fromDate?: string, 
-    toDate?: string
+	limit = 10,
+	fromDate?: string,
+	toDate?: string,
+	calendarName?: string,
 ): Promise<CalendarEvent[]> {
-    try {
-        console.error("getEvents - Starting to fetch calendar events");
-        
-        const accessResult = await requestCalendarAccess();
-        if (!accessResult.hasAccess) {
-            throw new Error(accessResult.message);
-        }
-        console.error("getEvents - Calendar access check passed");
+	console.error("getEvents - Starting to fetch calendar events");
+	try {
+		const lock = getCalendarLock();
+		const ek = await ensureCalendarAccess();
+		console.error("getEvents - Calendar access check passed");
 
-        // Set default date range if not provided
-        const today = new Date();
-        const defaultEndDate = new Date();
-        defaultEndDate.setDate(today.getDate() + 7);
-        
-        const startDate = fromDate ? fromDate : today.toISOString().split('T')[0];
-        const endDate = toDate ? toDate : defaultEndDate.toISOString().split('T')[0];
-        
-        const script = `
-tell application "Calendar"
-    set eventList to {}
-    set eventCount to 0
-    
-    -- Create a simple test event to return (since Calendar queries are too slow)
-    try
-        set testEvent to {}
-        set testEvent to testEvent & {id:"dummy-event-1"}
-        set testEvent to testEvent & {title:"No events available - Calendar operations too slow"}
-        set testEvent to testEvent & {calendarName:"System"}
-        set testEvent to testEvent & {startDate:"${startDate}"}
-        set testEvent to testEvent & {endDate:"${endDate}"}
-        set testEvent to testEvent & {isAllDay:false}
-        set testEvent to testEvent & {location:""}
-        set testEvent to testEvent & {notes:"Calendar.app AppleScript queries are notoriously slow and unreliable"}
-        set testEvent to testEvent & {url:""}
-        
-        set eventList to eventList & {testEvent}
-    end try
-    
-    return eventList
-end tell`;
+		const normalizedFromDate = normalizeDateInput(fromDate, "fromDate");
+		const normalizedToDate = normalizeDateInput(toDate, "toDate");
 
-        const result = await runAppleScript(script) as any;
-        
-        // Convert AppleScript result to our format - handle both array and non-array results
-        const resultArray = Array.isArray(result) ? result : [];
-        const events: CalendarEvent[] = resultArray.map((eventData: any) => ({
-            id: eventData.id || `unknown-${Date.now()}`,
-            title: eventData.title || "Untitled Event",
-            location: eventData.location || null,
-            notes: eventData.notes || null,
-            startDate: eventData.startDate ? new Date(eventData.startDate).toISOString() : null,
-            endDate: eventData.endDate ? new Date(eventData.endDate).toISOString() : null,
-            calendarName: eventData.calendarName || "Unknown Calendar",
-            isAllDay: eventData.isAllDay || false,
-            url: eventData.url || null
-        }));
-        
-        return events;
-    } catch (error) {
-        console.error(`Error getting events: ${error instanceof Error ? error.message : String(error)}`);
-        return [];
-    }
+		const today = new Date();
+		const defaultEndDate = new Date();
+		defaultEndDate.setDate(today.getDate() + 7);
+
+		const startDateInput =
+			normalizedFromDate ?? today.toISOString().split("T")[0];
+		const endDateInput =
+			normalizedToDate ?? defaultEndDate.toISOString().split("T")[0];
+
+		const startDate = parseDateInput(startDateInput, "fromDate");
+		const endDateRaw = parseDateInput(endDateInput, "toDate");
+		const endDate = DATE_ONLY.test(endDateInput)
+			? endOfDay(endDateRaw)
+			: endDateRaw;
+
+		const safeLimit = Math.min(CONFIG.MAX_EVENTS, Math.max(1, Math.floor(limit)));
+		const { incomingCalendar, outgoingCalendar } = resolveLockedCalendars(ek, lock);
+
+		let targetCalendars = [incomingCalendar, outgoingCalendar];
+		if (calendarName) {
+			const nameLower = calendarName.trim().toLowerCase();
+			if (!lock.allowedLower.has(nameLower)) {
+				throw new Error(
+					`Calendar "${calendarName}" is not allowed. Allowed calendars: "${lock.incoming}", "${lock.outgoing}".`,
+				);
+			}
+			targetCalendars = [
+				nameLower === lock.outgoing.toLowerCase()
+					? outgoingCalendar
+					: incomingCalendar,
+			];
+		}
+
+		const calendarIds = Array.from(
+			new Set(
+				targetCalendars
+					.map((calendar: any) => getCalendarId(calendar))
+					.filter(Boolean),
+			),
+		);
+		if (calendarIds.length === 0) {
+			throw new Error(
+				`Unable to resolve calendar identifiers for "${lock.incoming}" and "${lock.outgoing}".`,
+			);
+		}
+		const calendarNames = Array.from(
+			new Set(
+				targetCalendars
+					.map((calendar: any) => getCalendarTitle(calendar))
+					.filter((name: string) => name.length > 0),
+			),
+		);
+
+		logCalendar("getEvents start", {
+			limit: safeLimit,
+			fromDate: startDate.toISOString(),
+			toDate: endDate.toISOString(),
+			calendarNames,
+		});
+
+		const predicate = ek.createEventPredicate(
+			startDate,
+			endDate,
+			calendarIds.length > 0 ? calendarIds : undefined,
+		);
+
+		const rawEvents = ek.getEventsWithPredicate(predicate) ?? [];
+		const events = rawEvents
+			.map((event: any) =>
+				mapEvent(event, calendarNames[0] ?? "Calendar"),
+			)
+			.filter((event: CalendarEvent) => event.startDate && event.endDate)
+			.sort((a: CalendarEvent, b: CalendarEvent) =>
+				(a.startDate ?? "").localeCompare(b.startDate ?? ""),
+			)
+			.slice(0, safeLimit);
+
+		logCalendar("getEvents result", { count: events.length });
+		return events;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(`Error getting events: ${message}`);
+		logCalendar("getEvents error", { error: message });
+		if (isCalendarLockError(message)) {
+			throw new Error(message);
+		}
+		if (
+			message.includes("fromDate") ||
+			message.includes("toDate") ||
+			message.includes("ISO 8601")
+		) {
+			throw error;
+		}
+		return [];
+	}
 }
 
-/**
- * Search for calendar events that match the search text
- * @param searchText Text to search for in event titles
- * @param limit Optional limit on the number of results (default 10)
- * @param fromDate Optional start date for search range in ISO format (default: today)
- * @param toDate Optional end date for search range in ISO format (default: 30 days from now)
- */
 async function searchEvents(
-    searchText: string, 
-    limit = 10, 
-    fromDate?: string, 
-    toDate?: string
+	searchText: string,
+	limit = 10,
+	fromDate?: string,
+	toDate?: string,
+	calendarName?: string,
 ): Promise<CalendarEvent[]> {
-    try {
-        const accessResult = await requestCalendarAccess();
-        if (!accessResult.hasAccess) {
-            throw new Error(accessResult.message);
-        }
+	const trimmed = searchText.trim();
+	const safeLimit = Math.min(CONFIG.MAX_EVENTS, Math.max(1, Math.floor(limit)));
+	const events = await getEvents(CONFIG.MAX_EVENTS, fromDate, toDate, calendarName);
 
-        console.error(`searchEvents - Processing calendars for search: "${searchText}"`);
+	if (!trimmed) {
+		logCalendar("searchEvents result", {
+			searchText: "",
+			total: events.length,
+			matched: Math.min(events.length, safeLimit),
+		});
+		return events.slice(0, safeLimit);
+	}
 
-        // Set default date range if not provided
-        const today = new Date();
-        const defaultEndDate = new Date();
-        defaultEndDate.setDate(today.getDate() + 30);
-        
-        const startDate = fromDate ? fromDate : today.toISOString().split('T')[0];
-        const endDate = toDate ? toDate : defaultEndDate.toISOString().split('T')[0];
-        
-        const script = `
-tell application "Calendar"
-    set eventList to {}
-    
-    -- Return empty list for search (Calendar queries are too slow)
-    return eventList
-end tell`;
+	const query = trimmed.toLowerCase();
+	const filtered = events
+		.filter((event) => {
+			const haystack = [event.title, event.location, event.notes]
+				.filter((value): value is string => Boolean(value && value.trim()))
+				.join("\n")
+				.toLowerCase();
+			return haystack.includes(query);
+		})
+		.slice(0, safeLimit);
 
-        const result = await runAppleScript(script) as any;
-        
-        // Convert AppleScript result to our format - handle both array and non-array results
-        const resultArray = Array.isArray(result) ? result : [];
-        const events: CalendarEvent[] = resultArray.map((eventData: any) => ({
-            id: eventData.id || `unknown-${Date.now()}`,
-            title: eventData.title || "Untitled Event",
-            location: eventData.location || null,
-            notes: eventData.notes || null,
-            startDate: eventData.startDate ? new Date(eventData.startDate).toISOString() : null,
-            endDate: eventData.endDate ? new Date(eventData.endDate).toISOString() : null,
-            calendarName: eventData.calendarName || "Unknown Calendar",
-            isAllDay: eventData.isAllDay || false,
-            url: eventData.url || null
-        }));
-        
-        return events;
-    } catch (error) {
-        console.error(`Error searching events: ${error instanceof Error ? error.message : String(error)}`);
-        return [];
-    }
+	logCalendar("searchEvents result", {
+		searchText: trimmed,
+		total: events.length,
+		matched: filtered.length,
+	});
+	return filtered;
 }
 
-/**
- * Create a new calendar event
- * @param title Title of the event
- * @param startDate Start date/time in ISO format
- * @param endDate End date/time in ISO format
- * @param location Optional location of the event
- * @param notes Optional notes for the event
- * @param isAllDay Optional flag to create an all-day event
- * @param calendarName Optional calendar name to add the event to (uses default if not specified)
- */
 async function createEvent(
-    title: string,
-    startDate: string,
-    endDate: string,
-    location?: string,
-    notes?: string,
-    isAllDay = false,
-    calendarName?: string
-): Promise<{ success: boolean; message: string; eventId?: string }> {
-    try {
-        const accessResult = await requestCalendarAccess();
-        if (!accessResult.hasAccess) {
-            return {
-                success: false,
-                message: accessResult.message
-            };
-        }
+	title: string,
+	startDate: string,
+	endDate: string,
+	location?: string,
+	notes?: string,
+	isAllDay = false,
+	calendarName?: string,
+): Promise<{
+	success: boolean;
+	message: string;
+	eventId?: string;
+	startDate?: string;
+	endDate?: string;
+}> {
+	try {
+		const lock = getCalendarLock();
+		const ek = await ensureCalendarAccess();
 
-        // Validate inputs
-        if (!title.trim()) {
-            return {
-                success: false,
-                message: "Event title cannot be empty"
-            };
-        }
+		if (!title.trim()) {
+			return { success: false, message: "Event title cannot be empty" };
+		}
 
-        if (!startDate || !endDate) {
-            return {
-                success: false,
-                message: "Start date and end date are required"
-            };
-        }
+		const normalizedStartDate = normalizeDateInput(startDate, "startDate");
+		const normalizedEndDate = normalizeDateInput(endDate, "endDate");
+		if (!normalizedStartDate || !normalizedEndDate) {
+			return { success: false, message: "Start date and end date are required" };
+		}
 
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-            return {
-                success: false,
-                message: "Invalid date format. Please use ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)"
-            };
-        }
+		const start = parseDateInput(normalizedStartDate, "startDate");
+		const end = parseDateInput(normalizedEndDate, "endDate");
+		if (end <= start) {
+			return { success: false, message: "End date must be after start date" };
+		}
 
-        if (end <= start) {
-            return {
-                success: false,
-                message: "End date must be after start date"
-            };
-        }
+		const { outgoingCalendar } = resolveLockedCalendars(ek, lock);
+		const outgoingLower = lock.outgoing.toLowerCase();
 
-        console.error(`createEvent - Attempting to create event: "${title}"`);
+		if (calendarName) {
+			const nameLower = calendarName.trim().toLowerCase();
+			if (nameLower !== outgoingLower) {
+				return {
+					success: false,
+					message: `Calendar "${calendarName}" is not writable. Use outgoing calendar "${lock.outgoing}".`,
+				};
+			}
+		}
 
-        const targetCalendar = calendarName || "Calendar";
-        
-        const script = `
-tell application "Calendar"
-    set startDate to date "${start.toLocaleString()}"
-    set endDate to date "${end.toLocaleString()}"
-    
-    -- Find target calendar
-    set targetCal to null
-    try
-        set targetCal to calendar "${targetCalendar}"
-    on error
-        -- Use first available calendar
-        set targetCal to first calendar
-    end try
-    
-    -- Create the event
-    tell targetCal
-        set newEvent to make new event with properties {summary:"${title.replace(/"/g, '\\"')}", start date:startDate, end date:endDate, allday event:${isAllDay}}
-        
-        if "${location || ""}" ≠ "" then
-            set location of newEvent to "${(location || '').replace(/"/g, '\\"')}"
-        end if
-        
-        if "${notes || ""}" ≠ "" then
-            set description of newEvent to "${(notes || '').replace(/"/g, '\\"')}"
-        end if
-        
-        return uid of newEvent
-    end tell
-end tell`;
+		const targetCalendar = outgoingCalendar;
 
-        const eventId = await runAppleScript(script) as string;
-        
-        return {
-            success: true,
-            message: `Event "${title}" created successfully.`,
-            eventId: eventId
-        };
-    } catch (error) {
-        return {
-            success: false,
-            message: `Error creating event: ${error instanceof Error ? error.message : String(error)}`
-        };
-    }
+		const calendarId = targetCalendar ? getCalendarId(targetCalendar) : "";
+
+		console.error(`createEvent - Attempting to create event: "${title}"`);
+		logCalendar("createEvent start", {
+			title,
+			startDate: normalizedStartDate,
+			endDate: normalizedEndDate,
+			calendarName: targetCalendar ? getCalendarTitle(targetCalendar) : undefined,
+		});
+
+		const eventData: any = {
+			title,
+			startDate: start,
+			endDate: end,
+			isAllDay: Boolean(isAllDay),
+		};
+
+		if (location) eventData.location = location;
+		if (notes) eventData.notes = notes;
+		if (calendarId) {
+			eventData.calendarIdentifier = calendarId;
+			eventData.calendarId = calendarId;
+			eventData.calendar = targetCalendar;
+		}
+
+		const saved = await Promise.resolve(ek.saveEvent(eventData, undefined, true));
+		const eventId =
+			typeof saved === "string"
+				? saved
+				: saved?.id ?? saved?.identifier ?? eventData.identifier ?? undefined;
+
+		logCalendar("createEvent result", { success: true, eventId });
+		return {
+			success: true,
+			message: `Event "${title}" created successfully.`,
+			eventId,
+			startDate: start.toISOString(),
+			endDate: end.toISOString(),
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		logCalendar("createEvent error", { error: message });
+		return {
+			success: false,
+			message: `Error creating event: ${message}`,
+		};
+	}
 }
 
-/**
- * Open a specific calendar event in the Calendar app
- * @param eventId ID of the event to open
- */
-async function openEvent(eventId: string): Promise<{ success: boolean; message: string }> {
-    try {
-        const accessResult = await requestCalendarAccess();
-        if (!accessResult.hasAccess) {
-            return {
-                success: false,
-                message: accessResult.message
-            };
-        }
+async function openEvent(
+	eventId: string,
+): Promise<{ success: boolean; message: string }> {
+	try {
+		const lock = getCalendarLock();
+		const ek = await ensureCalendarAccess();
+		console.error(`openEvent - Attempting to open event with ID: ${eventId}`);
+		logCalendar("openEvent start", { eventId });
 
-        console.error(`openEvent - Attempting to open event with ID: ${eventId}`);
+		const event = ek.getEvent(eventId);
+		if (!event) {
+			logCalendar("openEvent result", { success: false, eventId });
+			return { success: false, message: "Event not found" };
+		}
 
-        const script = `
-tell application "Calendar"
-    activate
-    return "Calendar app opened (event search too slow)"
-end tell`;
+		const { incomingCalendar, outgoingCalendar } = resolveLockedCalendars(ek, lock);
+		const allowedIds = new Set(
+			[
+				getCalendarId(incomingCalendar),
+				getCalendarId(outgoingCalendar),
+			].filter(Boolean),
+		);
+		const eventCalendarId =
+			getCalendarId(event?.calendar) ||
+			String(event?.calendarIdentifier ?? event?.calendarId ?? "");
+		const eventCalendarName = getEventCalendarName(event);
+		const allowedById =
+			eventCalendarId.length > 0 && allowedIds.has(eventCalendarId);
+		const allowedByName =
+			eventCalendarName.length > 0 &&
+			lock.allowedLower.has(eventCalendarName.toLowerCase());
 
-        const result = await runAppleScript(script) as string;
-        
-        // Check if this looks like a non-existent event ID
-        if (eventId.includes("non-existent") || eventId.includes("12345")) {
-            return {
-                success: false,
-                message: "Event not found (test scenario)"
-            };
-        }
-        
-        return {
-            success: true,
-            message: result
-        };
-    } catch (error) {
-        return {
-            success: false,
-            message: `Error opening event: ${error instanceof Error ? error.message : String(error)}`
-        };
-    }
+		if (!allowedById && !allowedByName) {
+			logCalendar("openEvent denied", { eventId });
+			return {
+				success: false,
+				message: `Event is not in allowed calendars ("${lock.incoming}", "${lock.outgoing}").`,
+			};
+		}
+
+		logCalendar("openEvent result", { success: true, eventId });
+		return { success: true, message: "Event found" };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		logCalendar("openEvent error", { error: message });
+		return { success: false, message: `Error opening event: ${message}` };
+	}
 }
 
 const calendar = {
-    searchEvents,
-    openEvent,
-    getEvents,
-    createEvent,
-    requestCalendarAccess
+	searchEvents,
+	openEvent,
+	getEvents,
+	listCalendars,
+	createEvent,
 };
 
 export default calendar;

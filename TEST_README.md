@@ -6,18 +6,18 @@ This document explains how to run the comprehensive test suite for Apple MCP too
 
 ```bash
 # Run all tests
-npm run test
+bun run test
 
 # Run specific tool tests
-npm run test:contacts
-npm run test:messages
-npm run test:notes
-npm run test:mail
-npm run test:reminders
-npm run test:calendar
-npm run test:maps
-npm run test:web-search
-npm run test:mcp
+bun run test:contacts
+bun run test:messages
+bun run test:notes
+bun run test:mail
+bun run test:reminders
+bun run test:calendar
+bun run test:maps
+bun run test:policy
+bun run test:calendar-http
 ```
 
 ## 📋 Prerequisites
@@ -34,6 +34,30 @@ The tests interact with real Apple apps and require appropriate permissions:
 6. **Messages Access**: May require Full Disk Access for Terminal/iTerm2
    - System Preferences > Security & Privacy > Privacy > Full Disk Access
    - Add Terminal.app or iTerm.app
+
+### Calendar Lock Environment Variables
+
+Calendar operations are locked to two calendars. If either env var is missing, **all calendar operations are disabled**.
+
+- `APPLE_MCP_CALENDAR_INCOMING` (read-only)
+- `APPLE_MCP_CALENDAR_OUTGOING` (read/write)
+
+The test setup defaults both to the test calendar (`Test-Claude-Calendar`) if you do not set them.
+
+### Tool Policy (`config.ini`)
+
+You can enable/disable tools and read/write capabilities per tool with `config.ini`.
+
+```ini
+[tool.calendar]
+enabled = true
+read = true
+write = false
+```
+
+When a tool or mode is disabled:
+- `tools/list` will hide blocked tools/operations.
+- `tools/call` returns an explicit policy error.
 
 ### Test Phone Number
 
@@ -59,9 +83,10 @@ tests/
 │   ├── reminders.test.ts      # Reminders functionality
 │   ├── calendar.test.ts       # Calendar functionality
 │   ├── maps.test.ts           # Maps functionality
-│   └── web-search.test.ts     # Web search functionality
-└── mcp/
-    └── handlers.test.ts       # MCP tool handler validation
+├── unit/
+│   └── tool-policy.test.ts    # config.ini policy parser + enforcement
+└── (HTTP scripts)
+    └── scripts/test-calendar-http.ts
 ```
 
 ## 🔧 Test Types
@@ -108,11 +133,20 @@ For more detailed output, run individual tests:
 
 ```bash
 # More verbose contacts testing
-npm run test:contacts-full
+bun run test:contacts-full
 
 # Watch mode for development
-npm run test:watch
+bun run test:watch
+
+# Calendar PM2 endpoint validation
+bun run test:calendar-http
 ```
+
+`bun run test:calendar-http` now validates:
+- `tools/list` includes `calendar` with operation enum (`search`, `open`, `list`, `listCalendars`, `create`)
+- `tools/list` includes `calendar.inputSchema.oneOf` and `calendar.outputSchema`
+- calendar lock enforcement errors (`not allowed`, `not writable`)
+- structured response fields (`operation`, `ok`, `calendars`, `calendarsCount`, `events`, `eventsCount`, `event`)
 
 ## 📊 Test Coverage
 
@@ -127,19 +161,19 @@ The test suite covers:
 
 ## 🎯 Expected Results
 
-**Successful Test Run Should Show:**
+**Successful Calendar-Focused Run Should Show:**
 
 - All Apple apps accessible
 - Test data created and cleaned up automatically
-- Real messages sent/received using test phone number
-- Calendar events, notes, reminders created in test folders/lists
-- Web search returning real results
+- Calendar lock calendars resolved
+- Calendar list/read checks passing
+- Calendar suppression checks passing (`not allowed` / `not writable`)
 
 **Partial Success is Normal:**
 
 - Some Apple apps may require additional permissions
-- Network-dependent tests (web search) may fail offline
 - Messaging tests require active phone service
+- Integration tests may skip calendar assertions when locked calendars are unavailable in the current process
 
 ## 🧹 Test Data Cleanup
 

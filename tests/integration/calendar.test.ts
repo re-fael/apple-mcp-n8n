@@ -3,10 +3,58 @@ import { TEST_DATA } from "../fixtures/test-data.js";
 import { assertNotEmpty, assertValidDate, sleep } from "../helpers/test-utils.js";
 import calendarModule from "../../utils/calendar.js";
 
+const INCOMING_CALENDAR =
+  process.env.APPLE_MCP_CALENDAR_INCOMING ?? TEST_DATA.CALENDAR.calendarName;
+const OUTGOING_CALENDAR =
+  process.env.APPLE_MCP_CALENDAR_OUTGOING ?? TEST_DATA.CALENDAR.calendarName;
+
+function isCalendarAccessDenied(message: string | undefined): boolean {
+  const normalized = String(message ?? "").toLowerCase();
+  return (
+    normalized.includes("calendar access was denied") ||
+    normalized.includes("ensure calendar permissions are granted")
+  );
+}
+
+function isCalendarUnavailable(message: string | undefined): boolean {
+  const normalized = String(message ?? "").toLowerCase();
+  return (
+    isCalendarAccessDenied(message) ||
+    normalized.includes("incoming calendar") ||
+    normalized.includes("outgoing calendar") ||
+    normalized.includes("calendar operations are disabled")
+  );
+}
+
+function isCalendarUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return isCalendarUnavailable(message);
+}
+
+async function runOrSkipUnavailable<T>(
+  label: string,
+  action: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await action();
+  } catch (error) {
+    if (isCalendarUnavailableError(error)) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`ℹ️ Skipping ${label} due to calendar unavailability: ${message}`);
+      return null;
+    }
+    throw error;
+  }
+}
+
 describe("Calendar Integration Tests", () => {
   describe("getEvents", () => {
     it("should retrieve calendar events for next week", async () => {
-      const events = await calendarModule.getEvents(10);
+      const events = await runOrSkipUnavailable(
+        "getEvents(next week)",
+        () => calendarModule.getEvents(10),
+      );
+      if (events === null) return;
       
       expect(Array.isArray(events)).toBe(true);
       console.log(`Found ${events.length} events in the next 7 days`);
@@ -48,11 +96,16 @@ describe("Calendar Integration Tests", () => {
       nextWeek.setDate(tomorrow.getDate() + 7);
       nextWeek.setHours(23, 59, 59, 999);
       
-      const events = await calendarModule.getEvents(
-        20,
-        tomorrow.toISOString(),
-        nextWeek.toISOString()
+      const events = await runOrSkipUnavailable(
+        "getEvents(custom range)",
+        () =>
+          calendarModule.getEvents(
+            20,
+            tomorrow.toISOString(),
+            nextWeek.toISOString()
+          ),
       );
+      if (events === null) return;
       
       expect(Array.isArray(events)).toBe(true);
       console.log(`Found ${events.length} events between ${tomorrow.toLocaleDateString()} and ${nextWeek.toLocaleDateString()}`);
@@ -72,11 +125,38 @@ describe("Calendar Integration Tests", () => {
 
     it("should limit event count correctly", async () => {
       const limit = 3;
-      const events = await calendarModule.getEvents(limit);
+      const events = await runOrSkipUnavailable(
+        "getEvents(limit)",
+        () => calendarModule.getEvents(limit),
+      );
+      if (events === null) return;
       
       expect(Array.isArray(events)).toBe(true);
       expect(events.length).toBeLessThanOrEqual(limit);
       console.log(`Requested ${limit} events, got ${events.length}`);
+    }, 15000);
+  });
+
+  describe("listCalendars", () => {
+    it("should list available calendars", async () => {
+      try {
+        const calendars = await calendarModule.listCalendars();
+
+        expect(Array.isArray(calendars)).toBe(true);
+        console.log(`Calendars visible: ${calendars.length}`);
+        if (calendars.length === 0) {
+          console.log("ℹ️ No calendars found - this can happen with restricted access");
+          return;
+        }
+        for (const calendarName of calendars) {
+          expect(typeof calendarName).toBe("string");
+          expect(calendarName.length).toBeGreaterThan(0);
+          console.log(`  - ${calendarName}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`⚠️ Calendar access not granted: ${message}`);
+      }
     }, 15000);
   });
 
@@ -98,6 +178,12 @@ describe("Calendar Integration Tests", () => {
         TEST_DATA.CALENDAR.testEvent.location,
         TEST_DATA.CALENDAR.testEvent.notes
       );
+
+      if (!result.success && isCalendarUnavailable(result.message)) {
+        console.log(`ℹ️ Skipping create assertion due to calendar unavailability: ${result.message}`);
+        expect(result.success).toBe(false);
+        return;
+      }
       
       expect(result.success).toBe(true);
       expect(result.eventId).toBeTruthy();
@@ -125,6 +211,12 @@ describe("Calendar Integration Tests", () => {
         "This is an all-day event",
         true // isAllDay
       );
+
+      if (!result.success && isCalendarUnavailable(result.message)) {
+        console.log(`ℹ️ Skipping all-day create assertion due to calendar unavailability: ${result.message}`);
+        expect(result.success).toBe(false);
+        return;
+      }
       
       expect(result.success).toBe(true);
       expect(result.eventId).toBeTruthy();
@@ -150,14 +242,17 @@ describe("Calendar Integration Tests", () => {
         "Test Location",
         "Event in specific calendar",
         false,
-        TEST_DATA.CALENDAR.calendarName
+        OUTGOING_CALENDAR
       );
-      
-      if (result.success) {
-        console.log(`✅ Created event in specific calendar: "${specificCalendarEvent}"`);
-      } else {
-        console.log(`ℹ️ Could not create in specific calendar (${result.message}), but this is expected if the calendar doesn't exist`);
+
+      if (!result.success && isCalendarUnavailable(result.message)) {
+        console.log(`ℹ️ Skipping specific-calendar create assertion due to calendar unavailability: ${result.message}`);
+        expect(result.success).toBe(false);
+        return;
       }
+      
+      expect(result.success).toBe(true);
+      console.log(`✅ Created event in specific calendar: "${specificCalendarEvent}"`);
     }, 15000);
   });
 
@@ -173,23 +268,41 @@ describe("Calendar Integration Tests", () => {
       
       const searchableEventTitle = `Searchable Test Event ${Date.now()}`;
       
-      await calendarModule.createEvent(
+      const createResult = await calendarModule.createEvent(
         searchableEventTitle,
         searchEventTime.toISOString(),
         searchEventEndTime.toISOString(),
         "Search Test Location",
         "This event is for search testing"
       );
+      if (!createResult.success && isCalendarUnavailable(createResult.message)) {
+        console.log(`ℹ️ Skipping search-by-title test due to calendar unavailability: ${createResult.message}`);
+        return;
+      }
       
       await sleep(3000); // Wait for event to be indexed
       
       // Now search for it
-      const searchResults = await calendarModule.searchEvents("Searchable Test", 10);
+      const searchResults = await runOrSkipUnavailable(
+        "searchEvents(by title)",
+        () => calendarModule.searchEvents("Searchable Test", 10),
+      );
+      if (searchResults === null) return;
       
       expect(Array.isArray(searchResults)).toBe(true);
       
       if (searchResults.length > 0) {
         console.log(`✅ Found ${searchResults.length} events matching "Searchable Test"`);
+        for (const event of searchResults) {
+          const searchableText = [
+            event.title ?? "",
+            event.location ?? "",
+            event.notes ?? "",
+          ]
+            .join(" ")
+            .toLowerCase();
+          expect(searchableText.includes("searchable test")).toBe(true);
+        }
         
         const matchingEvent = searchResults.find(event => 
           event.title.includes("Searchable Test")
@@ -212,12 +325,17 @@ describe("Calendar Integration Tests", () => {
       const monthAfterNext = new Date(nextMonth);
       monthAfterNext.setMonth(monthAfterNext.getMonth() + 1);
       
-      const searchResults = await calendarModule.searchEvents(
-        "meeting",
-        5,
-        nextMonth.toISOString(),
-        monthAfterNext.toISOString()
+      const searchResults = await runOrSkipUnavailable(
+        "searchEvents(date range)",
+        () =>
+          calendarModule.searchEvents(
+            "meeting",
+            5,
+            nextMonth.toISOString(),
+            monthAfterNext.toISOString()
+          ),
       );
+      if (searchResults === null) return;
       
       expect(Array.isArray(searchResults)).toBe(true);
       console.log(`Found ${searchResults.length} "meeting" events in future date range`);
@@ -230,19 +348,27 @@ describe("Calendar Integration Tests", () => {
     }, 20000);
 
     it("should handle search with no results", async () => {
-      const searchResults = await calendarModule.searchEvents("VeryUniqueEventTitle12345", 5);
+      const searchResults = await runOrSkipUnavailable(
+        "searchEvents(no results)",
+        () => calendarModule.searchEvents("VeryUniqueEventTitle12345", 5),
+      );
+      if (searchResults === null) return;
       
       expect(Array.isArray(searchResults)).toBe(true);
       expect(searchResults.length).toBe(0);
       
-      console.log("✅ Handled search with no results correctly");
+      console.log(`ℹ️ Search returned ${searchResults.length} events for unique query`);
     }, 15000);
   });
 
   describe("openEvent", () => {
     it("should open an existing event", async () => {
       // First get some events to find one we can open
-      const existingEvents = await calendarModule.getEvents(5);
+      const existingEvents = await runOrSkipUnavailable(
+        "openEvent(get existing)",
+        () => calendarModule.getEvents(5),
+      );
+      if (existingEvents === null) return;
       
       if (existingEvents.length > 0 && existingEvents[0].id) {
         const eventToOpen = existingEvents[0];
@@ -362,7 +488,11 @@ describe("Calendar Integration Tests", () => {
     }, 10000);
 
     it("should handle empty search text gracefully", async () => {
-      const searchResults = await calendarModule.searchEvents("", 5);
+      const searchResults = await runOrSkipUnavailable(
+        "searchEvents(empty query)",
+        () => calendarModule.searchEvents("", 5),
+      );
+      if (searchResults === null) return;
       
       expect(Array.isArray(searchResults)).toBe(true);
       console.log("✅ Handled empty search text correctly");

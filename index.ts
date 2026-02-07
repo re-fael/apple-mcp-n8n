@@ -7,6 +7,14 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { runAppleScript } from "run-applescript";
 import tools from "./tools";
+import { startStreamableHttpServer } from "./utils/streamable-http.js";
+import {
+	getConfiguredTools,
+	getToolAccessDecision,
+	isKnownToolName,
+	loadToolAccessConfig,
+	summarizeToolAccess,
+} from "./utils/tool-policy.js";
 
 
 // Safe mode implementation - lazy loading of modules
@@ -173,38 +181,138 @@ attemptEagerLoading();
 
 // Main server object
 let server: Server;
+const SERVER_INSTRUCTIONS_BASE = [
+	"Apple MCP exposes macOS app automation tools for Contacts, Notes, Messages, Mail, Reminders, Calendar, and Maps.",
+	"Use ISO 8601 dates (YYYY-MM-DD) or timestamps (YYYY-MM-DDTHH:mm:ssZ).",
+	"Date/time values returned by tools use ISO 8601 strings (UTC for timestamps).",
+	"For Calendar: use operation=list for date-based availability questions; use operation=search only for keyword filtering in title/location/notes.",
+	"Calendar operations are locked to incoming (read) and outgoing (read/write) calendars set via APPLE_MCP_CALENDAR_INCOMING and APPLE_MCP_CALENDAR_OUTGOING.",
+	"Calendar logs are written to ~/apple-mcp.out.log (override with APPLE_MCP_CALENDAR_LOG_FILE).",
+	"Ensure macOS Automation permissions are granted for the hosting process (Terminal/PM2/etc.).",
+];
+
+const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_TIMESTAMP =
+	/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+function normalizeIsoDateOrDateTime(
+	value: string,
+	fieldName: string,
+	options?: { allowDateOnly?: boolean },
+): string {
+	const raw = value.trim();
+	if (!raw) {
+		throw new Error(`${fieldName} must be a non-empty ISO 8601 string.`);
+	}
+
+	const allowDateOnly = options?.allowDateOnly ?? true;
+	if (ISO_DATE_ONLY.test(raw)) {
+		if (!allowDateOnly) {
+			throw new Error(
+				`${fieldName} must include a time component in ISO 8601 format (YYYY-MM-DDTHH:mm:ssZ).`,
+			);
+		}
+		return raw;
+	}
+
+	if (!ISO_TIMESTAMP.test(raw)) {
+		throw new Error(
+			`${fieldName} must be ISO 8601 (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ).`,
+		);
+	}
+
+	const parsed = new Date(raw);
+	if (Number.isNaN(parsed.getTime())) {
+		throw new Error(
+			`${fieldName} must be ISO 8601 (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ).`,
+		);
+	}
+	return parsed.toISOString();
+}
+
+function formatIsoTimestamp(value: string | null | undefined): string {
+	if (!value) return "N/A";
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
 
 // Initialize the server and set up handlers
 function initServer() {
 	console.error(
 		`Initializing server in ${safeModeFallback ? "safe" : "standard"} mode...`,
 	);
+	const toolAccessConfig = loadToolAccessConfig();
+	const configuredTools = getConfiguredTools(tools, toolAccessConfig);
+	const toolPolicySource =
+		toolAccessConfig.sourcePath ?? "default policy (all tools enabled)";
+	const serverInstructions = [
+		...SERVER_INSTRUCTIONS_BASE,
+		`Tool policy source: ${toolPolicySource}.`,
+		`Active tool modes: ${summarizeToolAccess(toolAccessConfig)}.`,
+	].join(" ");
+
+	if (toolAccessConfig.warnings.length > 0) {
+		for (const warning of toolAccessConfig.warnings) {
+			console.error(`Tool policy warning: ${warning}`);
+		}
+	}
+	console.error(`Tool policy loaded from: ${toolPolicySource}`);
+	console.error(`Exposed tools: ${configuredTools.map((tool) => tool.name).join(", ")}`);
 
 	server = new Server(
 		{
 			name: "Apple MCP tools",
 			version: "1.0.0",
 		},
-		{
-			capabilities: {
-				tools: {},
+			{
+				capabilities: {
+					tools: {},
+				},
+				instructions: serverInstructions,
 			},
-		},
 	);
 
 	server.setRequestHandler(ListToolsRequestSchema, async () => ({
-		tools,
+		tools: configuredTools,
 	}));
 
 	server.setRequestHandler(CallToolRequestSchema, async (request) => {
-		try {
-			const { name, arguments: args } = request.params;
+			try {
+				const { name, arguments: args } = request.params;
 
-			if (!args) {
-				throw new Error("No arguments provided");
-			}
+				if (!args) {
+					throw new Error("No arguments provided");
+				}
 
-			switch (name) {
+				if (isKnownToolName(name)) {
+					const operation =
+						typeof args === "object" &&
+						args !== null &&
+						"operation" in args &&
+						typeof (args as { operation?: unknown }).operation === "string"
+							? String((args as { operation?: unknown }).operation)
+							: undefined;
+
+					const decision = getToolAccessDecision(toolAccessConfig, name, operation);
+					if (!decision.allowed) {
+						return {
+							content: [
+								{
+									type: "text",
+									text:
+										decision.reason ??
+									`Tool "${name}" is blocked by policy.`,
+								},
+							],
+							tool: name,
+							operation: operation ?? null,
+							ok: false,
+							isError: true,
+						};
+					}
+				}
+
+				switch (name) {
 				case "contacts": {
 					if (!isContactsArgs(args)) {
 						throw new Error("Invalid arguments for contacts tool");
@@ -412,7 +520,7 @@ function initServer() {
 													? messages
 															.map(
 																(msg) =>
-																	`[${new Date(msg.date).toLocaleString()}] ${msg.is_from_me ? "Me" : msg.sender}: ${msg.content}`,
+																	`[${formatIsoTimestamp(msg.date)}] ${msg.is_from_me ? "Me" : msg.sender}: ${msg.content}`,
 															)
 															.join("\n")
 													: "No messages found",
@@ -428,18 +536,28 @@ function initServer() {
 										"Phone number, message, and scheduled time are required for schedule operation",
 									);
 								}
+								const scheduledTimeIso = normalizeIsoDateOrDateTime(
+									args.scheduledTime,
+									"scheduledTime",
+									{ allowDateOnly: false },
+								);
 								const scheduledMsg = await messageModule.scheduleMessage(
 									args.phoneNumber,
 									args.message,
-									new Date(args.scheduledTime),
+									new Date(scheduledTimeIso),
 								);
 								return {
 									content: [
 										{
 											type: "text",
-											text: `Message scheduled to be sent to ${args.phoneNumber} at ${scheduledMsg.scheduledTime}`,
+											text: `Message scheduled to be sent to ${args.phoneNumber} at ${scheduledTimeIso}`,
 										},
 									],
+									scheduledMessage: {
+										id: String(scheduledMsg.id),
+										phoneNumber: args.phoneNumber,
+										scheduledTime: scheduledTimeIso,
+									},
 									isError: false,
 								};
 							}
@@ -479,7 +597,7 @@ function initServer() {
 														messagesWithNames
 															.map(
 																(msg) =>
-																	`[${new Date(msg.date).toLocaleString()}] From ${msg.displayName}:\n${msg.content}`,
+																	`[${formatIsoTimestamp(msg.date)}] From ${msg.displayName}:\n${msg.content}`,
 															)
 															.join("\n\n")
 													: "No unread messages found",
@@ -888,17 +1006,22 @@ end tell`;
 						} else if (operation === "create") {
 							// Create a reminder
 							const { name, listName, notes, dueDate } = args;
+							const normalizedDueDate = dueDate
+								? normalizeIsoDateOrDateTime(dueDate, "dueDate", {
+										allowDateOnly: true,
+									})
+								: undefined;
 							const result = await remindersModule.createReminder(
 								name!,
 								listName,
 								notes,
-								dueDate,
+								normalizedDueDate,
 							);
 							return {
 								content: [
 									{
 										type: "text",
-										text: `Created reminder "${result.name}" ${listName ? `in list "${listName}"` : ""}.`,
+										text: `Created reminder "${result.name}" ${listName ? `in list "${listName}"` : ""}.${normalizedDueDate ? ` dueDate=${normalizedDueDate}` : ""}`,
 									},
 								],
 								success: true,
@@ -956,40 +1079,46 @@ end tell`;
 					if (!isCalendarArgs(args)) {
 						throw new Error("Invalid arguments for calendar tool");
 					}
+					const requestedOperation = args.operation;
 
 					try {
 						const calendarModule = await loadModule("calendar");
-						const { operation } = args;
 
-						switch (operation) {
+						switch (requestedOperation) {
 							case "search": {
-								const { searchText, limit, fromDate, toDate } = args;
+								const { searchText, limit, fromDate, toDate, calendarName } = args;
+								const keyword = typeof searchText === "string" ? searchText : "";
 								const events = await calendarModule.searchEvents(
-									searchText!,
+									keyword,
 									limit,
 									fromDate,
 									toDate,
+									calendarName,
 								);
 
 								return {
 									content: [
 										{
 											type: "text",
-											text:
-												events.length > 0
-													? `Found ${events.length} events matching "${searchText}":\n\n${events
-															.map(
-																(event) =>
-																	`${event.title} (${new Date(event.startDate!).toLocaleString()} - ${new Date(event.endDate!).toLocaleString()})\n` +
+												text:
+													events.length > 0
+														? `Found ${events.length} events matching "${keyword || "(no keyword)"}":\n\n${events
+																.map(
+																	(event) =>
+																		`${event.title} (${formatIsoTimestamp(event.startDate)} - ${formatIsoTimestamp(event.endDate)})\n` +
 																	`Location: ${event.location || "Not specified"}\n` +
 																	`Calendar: ${event.calendarName}\n` +
 																	`ID: ${event.id}\n` +
 																	`${event.notes ? `Notes: ${event.notes}\n` : ""}`,
 															)
 															.join("\n\n")}`
-													: `No events found matching "${searchText}".`,
-										},
-									],
+														: `No events found matching "${keyword || "(no keyword)"}".`,
+											},
+										],
+									events,
+									eventsCount: events.length,
+									operation: "search",
+									ok: true,
 									isError: false,
 								};
 							}
@@ -1007,23 +1136,53 @@ end tell`;
 												: `Error opening event: ${result.message}`,
 										},
 									],
+									operation: "open",
+									ok: result.success,
 									isError: !result.success,
 								};
 							}
 
+							case "listCalendars": {
+								const calendars = await calendarModule.listCalendars();
+
+								return {
+									content: [
+										{
+											type: "text",
+											text:
+												calendars.length > 0
+													? `Available calendars (${calendars.length}):\n\n${calendars
+															.map((name) => `- ${name}`)
+															.join("\n")}`
+													: "No calendars found.",
+										},
+										],
+									calendars,
+									calendarsCount: calendars.length,
+									operation: "listCalendars",
+									ok: true,
+									isError: false,
+								};
+							}
+
 							case "list": {
-								const { limit, fromDate, toDate } = args;
+								const { limit, fromDate, toDate, calendarName } = args;
 								const events = await calendarModule.getEvents(
 									limit,
 									fromDate,
 									toDate,
+									calendarName,
 								);
 
 								const startDateText = fromDate
-									? new Date(fromDate).toLocaleDateString()
+									? normalizeIsoDateOrDateTime(fromDate, "fromDate", {
+											allowDateOnly: true,
+										})
 									: "today";
 								const endDateText = toDate
-									? new Date(toDate).toLocaleDateString()
+									? normalizeIsoDateOrDateTime(toDate, "toDate", {
+											allowDateOnly: true,
+										})
 									: "next 7 days";
 
 								return {
@@ -1035,7 +1194,7 @@ end tell`;
 													? `Found ${events.length} events from ${startDateText} to ${endDateText}:\n\n${events
 															.map(
 																(event) =>
-																	`${event.title} (${new Date(event.startDate!).toLocaleString()} - ${new Date(event.endDate!).toLocaleString()})\n` +
+																	`${event.title} (${formatIsoTimestamp(event.startDate)} - ${formatIsoTimestamp(event.endDate)})\n` +
 																	`Location: ${event.location || "Not specified"}\n` +
 																	`Calendar: ${event.calendarName}\n` +
 																	`ID: ${event.id}`,
@@ -1043,7 +1202,11 @@ end tell`;
 															.join("\n\n")}`
 													: `No events found from ${startDateText} to ${endDateText}.`,
 										},
-									],
+										],
+									events,
+									eventsCount: events.length,
+									operation: "list",
+									ok: true,
 									isError: false,
 								};
 							}
@@ -1072,16 +1235,32 @@ end tell`;
 										{
 											type: "text",
 											text: result.success
-												? `${result.message} Event scheduled from ${new Date(startDate!).toLocaleString()} to ${new Date(endDate!).toLocaleString()}${result.eventId ? `\nEvent ID: ${result.eventId}` : ""}`
+												? `${result.message} Event scheduled from ${formatIsoTimestamp(result.startDate)} to ${formatIsoTimestamp(result.endDate)}${result.eventId ? `\nEvent ID: ${result.eventId}` : ""}`
 												: `Error creating event: ${result.message}`,
 										},
 									],
+									event: result.success
+										? {
+												id: result.eventId ?? null,
+												title,
+												startDate: result.startDate ?? null,
+												endDate: result.endDate ?? null,
+												location: location ?? null,
+												notes: notes ?? null,
+												isAllDay: Boolean(isAllDay),
+												calendarName: calendarName ?? null,
+												}
+										: undefined,
+									operation: "create",
+									ok: result.success,
 									isError: !result.success,
 								};
 							}
 
 							default:
-								throw new Error(`Unknown calendar operation: ${operation}`);
+								throw new Error(
+									`Unknown calendar operation: ${requestedOperation}`,
+								);
 						}
 					} catch (error) {
 						const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1092,6 +1271,8 @@ end tell`;
 									text: errorMessage.includes("access") ? errorMessage : `Error in calendar tool: ${errorMessage}`,
 								},
 							],
+							operation: requestedOperation,
+							ok: false,
 							isError: true,
 						};
 					}
@@ -1298,10 +1479,20 @@ end tell`;
 
 	// Start the server transport
 	console.error("Setting up MCP server transport...");
+	const transportMode =
+		process.env.APPLE_MCP_TRANSPORT ||
+		(process.argv.includes("--http") ? "http" : "stdio");
 
 	(async () => {
 		try {
 			console.error("Initializing transport...");
+
+			if (transportMode === "http") {
+				await startStreamableHttpServer(server);
+				console.error("Streamable HTTP transport initialized");
+				return;
+			}
+
 			const transport = new StdioServerTransport();
 
 			// Ensure stdout is only used for JSON messages
@@ -1547,7 +1738,7 @@ function isRemindersArgs(args: unknown): args is {
 
 
 function isCalendarArgs(args: unknown): args is {
-	operation: "search" | "open" | "list" | "create";
+	operation: "search" | "open" | "list" | "listCalendars" | "create";
 	searchText?: string;
 	eventId?: string;
 	limit?: number;
@@ -1570,14 +1761,14 @@ function isCalendarArgs(args: unknown): args is {
 		return false;
 	}
 
-	if (!["search", "open", "list", "create"].includes(operation)) {
+	if (!["search", "open", "list", "listCalendars", "create"].includes(operation)) {
 		return false;
 	}
 
 	// Check that required parameters are present for each operation
 	if (operation === "search") {
 		const { searchText } = args as { searchText?: unknown };
-		if (typeof searchText !== "string") {
+		if (searchText !== undefined && typeof searchText !== "string") {
 			return false;
 		}
 	}

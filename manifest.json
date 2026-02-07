@@ -29,7 +29,10 @@
 		"mcp_config": {
 			"command": "node",
 			"args": ["${__dirname}/dist/index.js"],
-			"env": {}
+			"env": {
+				"APPLE_MCP_CALENDAR_INCOMING": "",
+				"APPLE_MCP_CALENDAR_OUTGOING": ""
+			}
 		}
 	},
 	"tools": [

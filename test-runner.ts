@@ -9,10 +9,11 @@ const testCommands = {
   "mail": "bun test tests/integration/mail.test.ts --preload ./tests/setup.ts",
   "reminders": "bun test tests/integration/reminders.test.ts --preload ./tests/setup.ts",
   "calendar": "bun test tests/integration/calendar.test.ts --preload ./tests/setup.ts",
+  "policy": "bun test tests/unit/tool-policy.test.ts",
+  "calendar-http": "bun run scripts/test-calendar-http.ts",
   "maps": "bun test tests/integration/maps.test.ts --preload ./tests/setup.ts",
-  "web-search": "bun test tests/integration/web-search.test.ts --preload ./tests/setup.ts",
-  "mcp": "bun test tests/mcp/handlers.test.ts --preload ./tests/setup.ts",
-  "all": "bun test tests/**/*.test.ts --preload ./tests/setup.ts"
+  "mcp": "bun run scripts/test-calendar-http.ts",
+  "all": "bun test ./tests --preload ./tests/setup.ts"
 };
 
 async function runTest(testName: string) {
