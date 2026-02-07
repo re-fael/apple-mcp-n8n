@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  <em>Experimental project. Based on <a href="https://github.com/supermemoryai/apple-mcp">supermemoryai/apple-mcp</a>, made with Codex.</em>
+</p>
+
+<p align="center">
   <a href="https://github.com/re-fael/apple-mcp-n8n"><img alt="repository" src="https://img.shields.io/badge/github-re--fael%2Fapple--mcp--n8n-111827?style=for-the-badge"></a>
   <img alt="transport" src="https://img.shields.io/badge/transport-stdio%20%2B%20http-1d4ed8?style=for-the-badge">
   <img alt="runtime" src="https://img.shields.io/badge/runtime-bun%20%7C%20node-0f766e?style=for-the-badge">
@@ -199,6 +203,9 @@ CALENDAR_HTTP_ALLOW_WRITE=1 bun run test:calendar-http
 
 - Main repo: https://github.com/re-fael/apple-mcp-n8n
 - Upstream base: https://github.com/dhravya/apple-mcp
+- Original base project: https://github.com/supermemoryai/apple-mcp
+
+> Experimental project, made with Codex.
 
 ---
 
