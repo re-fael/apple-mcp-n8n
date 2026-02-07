@@ -143,8 +143,9 @@ bun run test:calendar-http
 ```
 
 `bun run test:calendar-http` now validates:
-- `tools/list` includes `calendar` with operation enum (`search`, `open`, `list`, `listCalendars`, `create`)
+- `tools/list` includes `calendar` with operation enum (policy-aware; `create` may be hidden when write is disabled)
 - `tools/list` includes `calendar.inputSchema.oneOf` and `calendar.outputSchema`
+- schema consistency across `operation enum` / `inputSchema.oneOf` / `outputSchema.operation.enum`
 - calendar lock enforcement errors (`not allowed`, `not writable`)
 - structured response fields (`operation`, `ok`, `calendars`, `calendarsCount`, `events`, `eventsCount`, `event`)
 

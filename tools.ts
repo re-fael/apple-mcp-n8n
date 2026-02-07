@@ -256,12 +256,14 @@ const CALENDAR_TOOL: Tool = {
     required: ["operation"],
     oneOf: [
       {
+        type: "object",
         properties: {
           operation: { const: "listCalendars" }
         },
         required: ["operation"]
       },
       {
+        type: "object",
         properties: {
           operation: { const: "open" },
           eventId: { type: "string", minLength: 1 }
@@ -269,18 +271,21 @@ const CALENDAR_TOOL: Tool = {
         required: ["operation", "eventId"]
       },
       {
+        type: "object",
         properties: {
           operation: { const: "list" }
         },
         required: ["operation"]
       },
       {
+        type: "object",
         properties: {
           operation: { const: "search" }
         },
         required: ["operation"]
       },
       {
+        type: "object",
         properties: {
           operation: { const: "create" },
           title: { type: "string", minLength: 1 },

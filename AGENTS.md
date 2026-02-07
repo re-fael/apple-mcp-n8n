@@ -15,6 +15,10 @@ This repository exposes Apple MCP tools (Contacts, Notes, Messages, Mail, Remind
   - `write` (write-like operations)
 - `tools/list` output is filtered by policy.
 - `tools/call` enforces policy and returns explicit block errors.
+- For operation-based tools, policy filtering keeps schema exposure aligned across:
+  - `inputSchema.properties.operation.enum`
+  - `inputSchema.oneOf` operation branches
+  - `outputSchema.properties.operation.enum`
 
 ## Calendar
 

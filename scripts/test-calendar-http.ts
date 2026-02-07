@@ -17,6 +17,36 @@ function assert(condition: unknown, message: string): asserts condition {
 	}
 }
 
+function toStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((item): item is string => typeof item === "string");
+}
+
+function sortedUnique(values: string[]): string[] {
+	return Array.from(new Set(values)).sort();
+}
+
+function getOperationConstsFromOneOf(inputSchema: any): string[] {
+	const oneOf = inputSchema?.oneOf;
+	if (!Array.isArray(oneOf)) return [];
+
+	return oneOf
+		.map((branch: any) => {
+			const operationConst = branch?.properties?.operation?.const;
+			return typeof operationConst === "string" ? operationConst : null;
+		})
+		.filter((value: unknown): value is string => typeof value === "string");
+}
+
+function getOneOfTypes(inputSchema: any): string[] {
+	const oneOf = inputSchema?.oneOf;
+	if (!Array.isArray(oneOf)) return [];
+
+	return oneOf
+		.map((branch: any) => (typeof branch?.type === "string" ? branch.type : null))
+		.filter((value: unknown): value is string => typeof value === "string");
+}
+
 async function postJson(url: string, payload: Record<string, unknown>): Promise<JsonRpcResponse> {
 	const response = await fetch(url, {
 		method: "POST",
@@ -97,38 +127,61 @@ async function run(): Promise<void> {
 	const tools = Array.isArray(toolsResult?.tools) ? toolsResult.tools : [];
 	const calendarTool = tools.find((tool: any) => tool?.name === "calendar");
 	assert(Boolean(calendarTool), "tools/list does not expose calendar tool.");
-	const operationEnum = calendarTool?.inputSchema?.properties?.operation?.enum;
+	const operationEnum = toStringArray(
+		calendarTool?.inputSchema?.properties?.operation?.enum,
+	);
 	assert(
-		Array.isArray(operationEnum),
+		operationEnum.length > 0,
 		"Calendar tool operation enum is missing from tools/list inputSchema.",
 	);
-	const expectedOps = ["search", "open", "list", "listCalendars", "create"];
-	for (const op of expectedOps) {
+	const requiredReadOps = ["search", "open", "list", "listCalendars"];
+	for (const op of requiredReadOps) {
 		assert(
 			operationEnum.includes(op),
 			`Calendar tool operation "${op}" missing from tools/list exposure.`,
 		);
 	}
+	const createExposed = operationEnum.includes("create");
 	console.log(`tools/list calendar operations: ${operationEnum.join(", ")}`);
 	assert(
 		Array.isArray(calendarTool?.inputSchema?.oneOf),
 		"Calendar inputSchema.oneOf is missing from tools/list exposure.",
 	);
+	const oneOfOperations = getOperationConstsFromOneOf(calendarTool?.inputSchema);
+	const oneOfTypes = getOneOfTypes(calendarTool?.inputSchema);
+	assert(
+		oneOfOperations.length > 0,
+		"Calendar inputSchema.oneOf operation branches are missing.",
+	);
+	assert(
+		oneOfTypes.length === oneOfOperations.length,
+		"Calendar inputSchema.oneOf branches must declare explicit object type.",
+	);
+	assert(
+		oneOfTypes.every((type) => type === "object"),
+		'Calendar inputSchema.oneOf branches must have type="object".',
+	);
+	assert(
+		JSON.stringify(sortedUnique(oneOfOperations)) ===
+			JSON.stringify(sortedUnique(operationEnum)),
+		"Calendar inputSchema.oneOf operation branches are not aligned with operation enum.",
+	);
 	assert(
 		calendarTool?.outputSchema && typeof calendarTool.outputSchema === "object",
 		"Calendar outputSchema is missing from tools/list exposure.",
 	);
-	const outputOperationEnum = calendarTool?.outputSchema?.properties?.operation?.enum;
+	const outputOperationEnum = toStringArray(
+		calendarTool?.outputSchema?.properties?.operation?.enum,
+	);
 	assert(
-		Array.isArray(outputOperationEnum),
+		outputOperationEnum.length > 0,
 		"Calendar outputSchema operation enum is missing.",
 	);
-	for (const op of expectedOps) {
-		assert(
-			outputOperationEnum.includes(op),
-			`Calendar outputSchema operation "${op}" missing.`,
-		);
-	}
+	assert(
+		JSON.stringify(sortedUnique(outputOperationEnum)) ===
+			JSON.stringify(sortedUnique(operationEnum)),
+		"Calendar outputSchema operation enum is not aligned with input operation enum.",
+	);
 
 	const listCalendars = await callTool(url, 3, "calendar", {
 		operation: "listCalendars",
@@ -173,12 +226,20 @@ async function run(): Promise<void> {
 	});
 	assert(
 		disallowedCreate?.isError === true,
-		"Expected calendar.create with non-writable calendarName to return isError=true.",
+		"Expected blocked calendar.create probe to return isError=true.",
 	);
-	assert(
-		extractText(disallowedCreate).toLowerCase().includes("not writable"),
-		'Expected "not writable" error text for blocked calendar.create.',
-	);
+	const createErrorText = extractText(disallowedCreate).toLowerCase();
+	if (createExposed) {
+		assert(
+			createErrorText.includes("not writable"),
+			'Expected "not writable" error text for blocked calendar.create.',
+		);
+	} else {
+		assert(
+			createErrorText.includes("disabled") || createErrorText.includes("blocked"),
+			'Expected policy block text ("disabled"/"blocked") when create is not exposed.',
+		);
+	}
 	assert(
 		disallowedCreate?.operation === "create",
 		"disallowed create should include operation=create.",
@@ -252,7 +313,7 @@ async function run(): Promise<void> {
 		console.log("Skipping calendar.open probe (no events returned by calendar.list).");
 	}
 
-	if (allowWriteProbe) {
+	if (allowWriteProbe && createExposed) {
 		const outgoingCalendar =
 			typeof calendars[calendars.length - 1] === "string"
 				? calendars[calendars.length - 1]
@@ -274,6 +335,10 @@ async function run(): Promise<void> {
 			"calendar.create response event.id is missing.",
 		);
 		console.log(`calendar.create write probe succeeded on "${outgoingCalendar}".`);
+	} else if (allowWriteProbe && !createExposed) {
+		console.log(
+			"Skipping outgoing calendar write probe because create is hidden by tool policy.",
+		);
 	} else {
 		console.log("Skipping outgoing calendar write probe (set CALENDAR_HTTP_ALLOW_WRITE=1 to enable).");
 	}
