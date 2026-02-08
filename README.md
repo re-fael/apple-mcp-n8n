@@ -41,6 +41,7 @@ Supported operations:
 - Strong schema contract (explicit operation enum + `outputSchema`)
 - LLM-parser friendly schema (flat, no `oneOf`/`anyOf`/type unions/pattern regex)
 - Structured responses (`operation`, `ok`, `isError`, counts, events)
+- `structuredContent` is always returned (required by n8n MCP client when `outputSchema` is declared)
 
 ---
 
@@ -114,11 +115,65 @@ Policy effects:
 
 ---
 
+## Calendar Tool Contract
+
+`calendar` input:
+
+- `operation`: `listCalendars | list | search | open | create | delete`
+- Common optional filters: `calendarName`, `fromDate`, `toDate`, `limit`
+- `open`: requires `eventId`
+- `create`: requires `title`, `startDate`, `endDate`
+- `delete`: requires `eventId`
+
+`calendar` output:
+
+- always includes: `operation`, `ok`, `isError`, `content`, `structuredContent`
+- `listCalendars`: `calendars`, `calendarsCount`
+- `list` / `search`: `events`, `eventsCount`
+- `create`: `event`
+- `delete`: `deletedEventId`, `deletedFromCalendar`
+
+---
+
 ## n8n Integration
 
 - Use n8n MCP Client node with `http://127.0.0.1:8787/mcp`
 - Prefer structured fields (`events`, `event`, counters)
 - Treat `content[].text` as summary text only
+- `structuredContent` is present on success and errors for n8n compatibility
+
+---
+
+## PM2 Runbook
+
+PM2 ecosystem file used in this setup:
+
+- `/Users/cabrera1/pm2-services/mcp-apple-http-streamable/ecosystem.config.js`
+
+Recommended env values:
+
+- `APPLE_MCP_TRANSPORT=http`
+- `APPLE_MCP_HTTP_HOST=127.0.0.1`
+- `APPLE_MCP_HTTP_PORT=8787`
+- `APPLE_MCP_HTTP_PATH=/mcp`
+- `APPLE_MCP_CALENDAR_INCOMING=Calendar`
+- `APPLE_MCP_CALENDAR_OUTGOING=🤖AKAI`
+- `CALENDAR_HTTP_ALLOW_WRITE=1` (enables HTTP write probe during `test:calendar-http`)
+
+Reload env after changes:
+
+```bash
+pm2 restart /Users/cabrera1/pm2-services/mcp-apple-http-streamable/ecosystem.config.js --only apple-mcp --update-env
+```
+
+---
+
+## Logs
+
+- PM2 runtime logs: `pm2 logs apple-mcp`
+- Delete operations are visible in PM2 logs (`deleteEvent - ...`)
+- Extended calendar logs are also written to:
+  - `~/apple-mcp.out.log` (or `APPLE_MCP_CALENDAR_LOG_FILE` override)
 
 ---
 
