@@ -583,6 +583,9 @@ async function deleteEvent(
 			eventId: trimmedEventId,
 			calendarName: lock.outgoing,
 		});
+		console.error(
+			`deleteEvent - Attempting to delete event with ID: ${trimmedEventId}`,
+		);
 
 		const event = ek.getEvent(trimmedEventId);
 		if (!event) {
@@ -622,6 +625,9 @@ async function deleteEvent(
 				eventId: trimmedEventId,
 				reason: "removeEvent returned false",
 			});
+			console.error(
+				`deleteEvent - Failed to delete event with ID: ${trimmedEventId}`,
+			);
 			return { success: false, message: "Failed to delete event" };
 		}
 
@@ -631,6 +637,9 @@ async function deleteEvent(
 			eventId: trimmedEventId,
 			deletedFromCalendar,
 		});
+		console.error(
+			`deleteEvent - Deleted event with ID: ${trimmedEventId} from calendar: ${deletedFromCalendar}`,
+		);
 		return {
 			success: true,
 			message: "Event deleted successfully.",
@@ -640,6 +649,7 @@ async function deleteEvent(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		logCalendar("deleteEvent error", { error: message });
+		console.error(`deleteEvent - Error deleting event: ${message}`);
 		return {
 			success: false,
 			message: message,
