@@ -28,7 +28,14 @@ function sortedUnique(values: string[]): string[] {
 
 function assertStructuredCalendarResult(
 	result: any,
-	expectedOperation: "search" | "open" | "list" | "listCalendars" | "create" | "delete",
+	expectedOperation:
+		| "search"
+		| "open"
+		| "list"
+		| "listCalendars"
+		| "create"
+		| "update"
+		| "delete",
 ) {
 	assert(
 		result?.structuredContent && typeof result.structuredContent === "object",
@@ -147,6 +154,7 @@ async function run(): Promise<void> {
 		);
 	}
 	const createExposed = operationEnum.includes("create");
+	const updateExposed = operationEnum.includes("update");
 	const deleteExposed = operationEnum.includes("delete");
 	console.log(`tools/list calendar operations: ${operationEnum.join(", ")}`);
 	assert(
@@ -291,6 +299,34 @@ async function run(): Promise<void> {
 	);
 	assert(disallowedDelete?.ok === false, "disallowed delete should include ok=false.");
 	assertStructuredCalendarResult(disallowedDelete, "delete");
+	const disallowedUpdate = await callTool(url, 62, "calendar", {
+		operation: "update",
+		eventId: "non-existent-event-id-for-policy-probe",
+		calendarName: "__NON_WRITABLE_CALENDAR__",
+		title: "Policy probe update title",
+	});
+	assert(
+		disallowedUpdate?.isError === true,
+		"Expected blocked calendar.update probe to return isError=true.",
+	);
+	const updateErrorText = extractText(disallowedUpdate).toLowerCase();
+	if (updateExposed) {
+		assert(
+			updateErrorText.includes("not writable"),
+			'Expected "not writable" error text for blocked calendar.update.',
+		);
+	} else {
+		assert(
+			updateErrorText.includes("disabled") || updateErrorText.includes("blocked"),
+			'Expected policy block text ("disabled"/"blocked") when update is not exposed.',
+		);
+	}
+	assert(
+		disallowedUpdate?.operation === "update",
+		"disallowed update should include operation=update.",
+	);
+	assert(disallowedUpdate?.ok === false, "disallowed update should include ok=false.");
+	assertStructuredCalendarResult(disallowedUpdate, "update");
 	if (deleteExposed && calendars.length > 1) {
 		const incomingCalendar = calendars[0];
 		const outgoingCalendar = calendars[calendars.length - 1];
@@ -428,6 +464,41 @@ async function run(): Promise<void> {
 			"calendar.create response event.id is missing.",
 		);
 		console.log(`calendar.create write probe succeeded on "${outgoingCalendar}".`);
+		if (updateExposed) {
+			const updatedTitle = `Calendar update probe ${Date.now()}`;
+			const updateWriteProbe = await callTool(url, 12, "calendar", {
+				operation: "update",
+				eventId: String(writeResult.event.id),
+				title: updatedTitle,
+				calendarName: outgoingCalendar,
+			});
+			assert(
+				!updateWriteProbe?.isError,
+				`Outgoing update probe failed: ${extractText(updateWriteProbe)}`,
+			);
+			assert(
+				updateWriteProbe?.operation === "update",
+				"calendar.update.operation mismatch.",
+			);
+			assert(
+				updateWriteProbe?.ok === true,
+				"calendar.update.ok should be true for write probe.",
+			);
+			assertStructuredCalendarResult(updateWriteProbe, "update");
+			assert(
+				updateWriteProbe?.event?.id === writeResult.event.id,
+				"calendar.update should return same event.id as the created event.",
+			);
+			assert(
+				updateWriteProbe?.event?.title === updatedTitle,
+				"calendar.update should return updated title.",
+			);
+			console.log(`calendar.update write probe succeeded on "${outgoingCalendar}".`);
+		} else {
+			console.log(
+				"Skipping update write probe because update is hidden by tool policy.",
+			);
+		}
 		if (deleteExposed) {
 			const deleteWriteProbe = await callTool(url, 11, "calendar", {
 				operation: "delete",

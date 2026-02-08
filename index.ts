@@ -22,6 +22,7 @@ type CalendarOperation =
   | "list"
   | "listCalendars"
   | "create"
+  | "update"
   | "delete";
 type ToolContentItem = { type: "text"; text: string };
 
@@ -68,6 +69,7 @@ type CalendarToolArgs = {
 const SERVER_INSTRUCTIONS_BASE = [
   "Apple Calendar MCP exposes only calendar operations for Apple Calendar.",
   "Use operation=list for date-based availability and operation=search for keyword filtering.",
+  "Use operation=update with eventId to edit events in the writable calendar.",
   "Use operation=delete with eventId to remove an event from the writable calendar.",
   "Calendar operations are locked to APPLE_MCP_CALENDAR_INCOMING (read) and APPLE_MCP_CALENDAR_OUTGOING (write).",
   "Use ISO 8601 dates (YYYY-MM-DD) or timestamps (YYYY-MM-DDTHH:mm:ssZ).",
@@ -86,6 +88,7 @@ function isCalendarOperation(value: unknown): value is CalendarOperation {
     value === "list" ||
     value === "listCalendars" ||
     value === "create" ||
+    value === "update" ||
     value === "delete"
   );
 }
@@ -152,6 +155,24 @@ function validateCalendarArgs(args: CalendarToolArgs): void {
     case "delete":
       if (!args.eventId?.trim()) {
         throw new Error("eventId is required for open/delete operations");
+      }
+      return;
+
+    case "update":
+      if (!args.eventId?.trim()) {
+        throw new Error("eventId is required for update operation");
+      }
+      if (
+        args.title === undefined &&
+        args.startDate === undefined &&
+        args.endDate === undefined &&
+        args.location === undefined &&
+        args.notes === undefined &&
+        args.isAllDay === undefined
+      ) {
+        throw new Error(
+          "At least one update field is required (title, startDate, endDate, location, notes, isAllDay)",
+        );
       }
       return;
 
@@ -337,6 +358,40 @@ async function main() {
 
           return calendarResult({
             content: asText(result.success ? result.message : `Error creating event: ${result.message}`),
+            ...(event ? { event } : {}),
+            operation,
+            ok: result.success,
+            isError: !result.success,
+          });
+        }
+
+        case "update": {
+          const result = await calendarModule.updateEvent(
+            rawArgs.eventId!,
+            rawArgs.title,
+            rawArgs.startDate,
+            rawArgs.endDate,
+            rawArgs.location,
+            rawArgs.notes,
+            rawArgs.isAllDay,
+            rawArgs.calendarName,
+          );
+
+          const event = result.success
+            ? {
+                id: result.eventId ?? rawArgs.eventId ?? null,
+                title: result.title ?? rawArgs.title ?? "Untitled Event",
+                startDate: result.startDate ?? null,
+                endDate: result.endDate ?? null,
+                location: result.location ?? null,
+                notes: result.notes ?? null,
+                isAllDay: Boolean(result.isAllDay),
+                calendarName: result.calendarName ?? rawArgs.calendarName ?? null,
+              }
+            : undefined;
+
+          return calendarResult({
+            content: asText(result.success ? result.message : `Error updating event: ${result.message}`),
             ...(event ? { event } : {}),
             operation,
             ok: result.success,

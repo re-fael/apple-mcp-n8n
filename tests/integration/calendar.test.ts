@@ -434,6 +434,84 @@ describe("Calendar Integration Tests", () => {
     }, 10000);
   });
 
+  describe("updateEvent", () => {
+    it("should update an existing event in outgoing calendar", async () => {
+      const start = new Date();
+      start.setDate(start.getDate() + 6);
+      start.setHours(9, 0, 0, 0);
+      const end = new Date(start);
+      end.setHours(10, 0, 0, 0);
+
+      const baseTitle = `Update Test Event ${Date.now()}`;
+      const created = await calendarModule.createEvent(
+        baseTitle,
+        start.toISOString(),
+        end.toISOString(),
+        "Update Test Location",
+        "Update test notes",
+        false,
+        OUTGOING_CALENDAR,
+      );
+
+      if (!created.success && isCalendarUnavailable(created.message)) {
+        console.log(`ℹ️ Skipping update assertion due to calendar unavailability: ${created.message}`);
+        expect(created.success).toBe(false);
+        return;
+      }
+
+      expect(created.success).toBe(true);
+      expect(created.eventId).toBeTruthy();
+
+      const updatedTitle = `${baseTitle} (updated)`;
+      const updated = await calendarModule.updateEvent(
+        created.eventId!,
+        updatedTitle,
+        undefined,
+        undefined,
+        "Updated Location",
+        "Updated Notes",
+        undefined,
+        OUTGOING_CALENDAR,
+      );
+      expect(updated.success).toBe(true);
+      expect(updated.eventId).toBe(created.eventId);
+      expect(updated.title).toBe(updatedTitle);
+      expect(updated.location).toBe("Updated Location");
+      expect(updated.notes).toBe("Updated Notes");
+      console.log(`✅ Updated event: "${updatedTitle}" (${created.eventId})`);
+
+      const cleanup = await calendarModule.deleteEvent(created.eventId!, OUTGOING_CALENDAR);
+      expect(cleanup.success).toBe(true);
+    }, 25000);
+
+    it("should reject update when targeting non-writable calendar name", async () => {
+      const result = await runOrSkipUnavailable(
+        "updateEvent(non writable)",
+        () =>
+          calendarModule.updateEvent(
+            "non-existent-event-id-12345",
+            "Should fail",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            INCOMING_CALENDAR,
+          ),
+      );
+      if (result === null) return;
+      if (isCalendarUnavailable(result.message)) {
+        console.log(`ℹ️ Skipping update non-writable assertion due to calendar unavailability: ${result.message}`);
+        expect(result.success).toBe(false);
+        return;
+      }
+
+      expect(result.success).toBe(false);
+      expect(result.message.toLowerCase()).toContain("not writable");
+      console.log("✅ updateEvent correctly blocks non-writable calendar target");
+    }, 10000);
+  });
+
   describe("deleteEvent", () => {
     it("should delete an existing event in outgoing calendar", async () => {
       const start = new Date();

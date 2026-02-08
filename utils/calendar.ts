@@ -551,6 +551,193 @@ async function openEvent(
 	}
 }
 
+function isEventInOutgoingCalendar(
+	event: any,
+	outgoingCalendar: any,
+	outgoingLower: string,
+): boolean {
+	const eventCalendarName = getEventCalendarName(event);
+	const outgoingCalendarId = getCalendarId(outgoingCalendar);
+	const eventCalendarId =
+		getCalendarId(event?.calendar) ||
+		String(event?.calendarIdentifier ?? event?.calendarId ?? "");
+	const isOutgoingById =
+		eventCalendarId.length > 0 &&
+		outgoingCalendarId.length > 0 &&
+		eventCalendarId === outgoingCalendarId;
+	const isOutgoingByName =
+		eventCalendarName.length > 0 &&
+		eventCalendarName.toLowerCase() === outgoingLower;
+	return isOutgoingById || isOutgoingByName;
+}
+
+async function updateEvent(
+	eventId: string,
+	title?: string,
+	startDate?: string,
+	endDate?: string,
+	location?: string,
+	notes?: string,
+	isAllDay?: boolean,
+	calendarName?: string,
+): Promise<{
+	success: boolean;
+	message: string;
+	eventId?: string;
+	title?: string;
+	startDate?: string;
+	endDate?: string;
+	location?: string | null;
+	notes?: string | null;
+	isAllDay?: boolean;
+	calendarName?: string;
+}> {
+	try {
+		const trimmedEventId = String(eventId ?? "").trim();
+		if (!trimmedEventId) {
+			return { success: false, message: "eventId is required for update operation" };
+		}
+		const hasPatchField =
+			title !== undefined ||
+			startDate !== undefined ||
+			endDate !== undefined ||
+			location !== undefined ||
+			notes !== undefined ||
+			isAllDay !== undefined;
+		if (!hasPatchField) {
+			return {
+				success: false,
+				message:
+					"At least one update field is required (title, startDate, endDate, location, notes, isAllDay).",
+			};
+		}
+
+		const lock = getCalendarLock();
+		const ek = await ensureCalendarAccess();
+		const { outgoingCalendar } = resolveLockedCalendars(ek, lock);
+		const outgoingLower = lock.outgoing.toLowerCase();
+
+		if (calendarName) {
+			const requested = calendarName.trim().toLowerCase();
+			if (requested && requested !== outgoingLower) {
+				return {
+					success: false,
+					message: `Calendar "${calendarName}" is not writable. Use outgoing calendar "${lock.outgoing}".`,
+				};
+			}
+		}
+
+		logCalendar("updateEvent start", {
+			eventId: trimmedEventId,
+			calendarName: lock.outgoing,
+		});
+		console.error(
+			`updateEvent - Attempting to update event with ID: ${trimmedEventId}`,
+		);
+
+		const event = ek.getEvent(trimmedEventId);
+		if (!event) {
+			logCalendar("updateEvent result", { success: false, eventId: trimmedEventId });
+			return { success: false, message: "Event not found" };
+		}
+
+		if (!isEventInOutgoingCalendar(event, outgoingCalendar, outgoingLower)) {
+			logCalendar("updateEvent denied", { eventId: trimmedEventId });
+			return {
+				success: false,
+				message: `Event is not in writable calendar "${lock.outgoing}".`,
+			};
+		}
+
+		if (title !== undefined && !title.trim()) {
+			return { success: false, message: "Event title cannot be empty" };
+		}
+
+		const currentStart = normalizeEventDate(event?.startDate ?? event?.start);
+		const currentEnd = normalizeEventDate(event?.endDate ?? event?.end);
+		const normalizedStartDate =
+			startDate !== undefined ? normalizeDateInput(startDate, "startDate") : undefined;
+		const normalizedEndDate =
+			endDate !== undefined ? normalizeDateInput(endDate, "endDate") : undefined;
+
+		const finalStartValue = normalizedStartDate ?? currentStart;
+		const finalEndValue = normalizedEndDate ?? currentEnd;
+		if (!finalStartValue || !finalEndValue) {
+			return {
+				success: false,
+				message: "Unable to resolve startDate/endDate for update operation.",
+			};
+		}
+
+		const finalStart = parseDateInput(finalStartValue, "startDate");
+		const finalEnd = parseDateInput(finalEndValue, "endDate");
+		if (finalEnd <= finalStart) {
+			return { success: false, message: "End date must be after start date" };
+		}
+
+		const finalTitle = title ?? String(event?.title ?? "Untitled Event");
+		const finalLocation =
+			location !== undefined
+				? location
+				: event?.location
+					? String(event.location)
+					: null;
+		const finalNotes =
+			notes !== undefined
+				? notes
+				: event?.notes
+					? String(event.notes)
+					: null;
+		const finalIsAllDay =
+			isAllDay !== undefined
+				? Boolean(isAllDay)
+				: Boolean(event?.isAllDay ?? event?.allDay ?? false);
+		const outgoingCalendarId = getCalendarId(outgoingCalendar);
+
+		const eventData: any = {
+			id: trimmedEventId,
+			title: finalTitle,
+			startDate: finalStart,
+			endDate: finalEnd,
+			isAllDay: finalIsAllDay,
+		};
+		if (finalLocation !== null) eventData.location = finalLocation;
+		if (finalNotes !== null) eventData.notes = finalNotes;
+		if (outgoingCalendarId) {
+			eventData.calendarIdentifier = outgoingCalendarId;
+			eventData.calendarId = outgoingCalendarId;
+			eventData.calendar = outgoingCalendar;
+		}
+
+		await Promise.resolve(ek.saveEvent(eventData, "thisEvent", true));
+
+		logCalendar("updateEvent result", { success: true, eventId: trimmedEventId });
+		console.error(
+			`updateEvent - Updated event with ID: ${trimmedEventId} in calendar: ${lock.outgoing}`,
+		);
+		return {
+			success: true,
+			message: "Event updated successfully.",
+			eventId: trimmedEventId,
+			title: finalTitle,
+			startDate: finalStart.toISOString(),
+			endDate: finalEnd.toISOString(),
+			location: finalLocation,
+			notes: finalNotes,
+			isAllDay: finalIsAllDay,
+			calendarName: lock.outgoing,
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		logCalendar("updateEvent error", { error: message });
+		console.error(`updateEvent - Error updating event: ${message}`);
+		return {
+			success: false,
+			message,
+		};
+	}
+}
+
 async function deleteEvent(
 	eventId: string,
 	calendarName?: string,
@@ -596,18 +783,7 @@ async function deleteEvent(
 		}
 
 		const eventCalendarName = getEventCalendarName(event);
-		const outgoingCalendarId = getCalendarId(outgoingCalendar);
-		const eventCalendarId =
-			getCalendarId(event?.calendar) ||
-			String(event?.calendarIdentifier ?? event?.calendarId ?? "");
-		const isOutgoingById =
-			eventCalendarId.length > 0 &&
-			outgoingCalendarId.length > 0 &&
-			eventCalendarId === outgoingCalendarId;
-		const isOutgoingByName =
-			eventCalendarName.length > 0 &&
-			eventCalendarName.toLowerCase() === outgoingLower;
-		if (!isOutgoingById && !isOutgoingByName) {
+		if (!isEventInOutgoingCalendar(event, outgoingCalendar, outgoingLower)) {
 			logCalendar("deleteEvent denied", {
 				eventId: trimmedEventId,
 				eventCalendarName,
@@ -665,6 +841,7 @@ const calendar = {
 	getEvents,
 	listCalendars,
 	createEvent,
+	updateEvent,
 	deleteEvent,
 };
 

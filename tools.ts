@@ -6,13 +6,14 @@ const CALENDAR_OPERATIONS = [
   "list",
   "listCalendars",
   "create",
+  "update",
   "delete",
 ] as const;
 
 const CALENDAR_TOOL: Tool = {
   name: "calendar",
   description:
-    "Search, create, delete, and open calendar events in Apple Calendar app. Use operation=list for date-range availability and operation=search for keyword filtering. Calendar access is locked to incoming/outgoing calendars. Returned startDate/endDate values are ISO 8601 UTC strings.",
+    "Search, create, update, delete, and open calendar events in Apple Calendar app. Use operation=list for date-range availability and operation=search for keyword filtering. Calendar access is locked to incoming/outgoing calendars. Returned startDate/endDate values are ISO 8601 UTC strings.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -20,7 +21,7 @@ const CALENDAR_TOOL: Tool = {
       operation: {
         type: "string",
         description:
-          "Operation to perform: 'search', 'open', 'list', 'listCalendars', 'create', or 'delete'. Use 'list' for date-only availability checks; use 'search' for keyword filtering.",
+          "Operation to perform: 'search', 'open', 'list', 'listCalendars', 'create', 'update', or 'delete'. Use 'list' for date-only availability checks; use 'search' for keyword filtering.",
         enum: [...CALENDAR_OPERATIONS],
       },
       searchText: {
@@ -30,7 +31,8 @@ const CALENDAR_TOOL: Tool = {
       },
       eventId: {
         type: "string",
-        description: "ID of the event to open/delete (required for open/delete operations)",
+        description:
+          "ID of the event to open/update/delete (required for open/update/delete operations)",
       },
       limit: {
         type: "integer",
@@ -50,7 +52,8 @@ const CALENDAR_TOOL: Tool = {
       },
       title: {
         type: "string",
-        description: "Title of the event to create (required for create operation)",
+        description:
+          "Title of the event (required for create; optional patch field for update)",
       },
       startDate: {
         type: "string",
@@ -64,21 +67,21 @@ const CALENDAR_TOOL: Tool = {
       },
       location: {
         type: "string",
-        description: "Location of the event (optional for create operation)",
+        description: "Location of the event (optional for create/update operations)",
       },
       notes: {
         type: "string",
-        description: "Additional notes for the event (optional for create operation)",
+        description: "Additional notes for the event (optional for create/update operations)",
       },
       isAllDay: {
         type: "boolean",
         description:
-          "Whether the event is an all-day event (optional for create operation, default is false)",
+          "Whether the event is an all-day event (optional for create/update operations)",
       },
       calendarName: {
         type: "string",
         description:
-          "Name of the calendar to target (optional for list/search/create/delete; list/search use both allowed locked calendars if omitted, create/delete use outgoing calendar if omitted)",
+          "Name of the calendar to target (optional for list/search/create/update/delete; list/search use both allowed locked calendars if omitted, create/update/delete use outgoing calendar if omitted)",
       },
     },
     required: ["operation"],

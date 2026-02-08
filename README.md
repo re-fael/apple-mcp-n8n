@@ -30,6 +30,7 @@ Supported operations:
 - `search`
 - `open`
 - `create`
+- `update`
 - `delete`
 
 ---
@@ -87,7 +88,7 @@ Calendar access is locked by env vars:
 - `APPLE_MCP_CALENDAR_OUTGOING` for write scope
 
 Read operations (`list`, `search`, `open`) resolve events across both locked calendars.
-Write operations (`create`, `delete`) are restricted to the outgoing calendar.
+Write operations (`create`, `update`, `delete`) are restricted to the outgoing calendar.
 
 If either variable is missing, calendar operations are disabled.
 
@@ -120,10 +121,11 @@ Policy effects:
 
 `calendar` input:
 
-- `operation`: `listCalendars | list | search | open | create | delete`
+- `operation`: `listCalendars | list | search | open | create | update | delete`
 - Common optional filters: `calendarName`, `fromDate`, `toDate`, `limit`
 - `open`: requires `eventId`
 - `create`: requires `title`, `startDate`, `endDate`
+- `update`: requires `eventId` + at least one patch field (`title`, `startDate`, `endDate`, `location`, `notes`, `isAllDay`)
 - `delete`: requires `eventId`
 
 `calendar` output:
@@ -132,6 +134,7 @@ Policy effects:
 - `listCalendars`: `calendars`, `calendarsCount`
 - `list` / `search`: `events`, `eventsCount`
 - `create`: `event`
+- `update`: `event`
 - `delete`: `deletedEventId`, `deletedFromCalendar`
 
 ---

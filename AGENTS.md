@@ -38,6 +38,7 @@ This repository exposes a **calendar-only** Apple MCP server with stdio and HTTP
   - `listCalendars` returns `calendars`, `calendarsCount`.
   - `list`/`search` return `events`, `eventsCount`.
   - `create` returns `event` on success.
+  - `update` returns `event` on success.
   - `delete` returns `deletedEventId` and `deletedFromCalendar` on success.
   - `open` returns text content.
 - Enforce agent logic on structured keys first; treat `content[].text` as human-readable summary.

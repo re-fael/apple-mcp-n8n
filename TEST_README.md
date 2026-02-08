@@ -55,6 +55,7 @@ tests/
 - `outputSchema` operation enum is aligned with input operation enum
 - blocked calendar enforcement (`not allowed`, `not writable`, policy blocks)
 - structured response keys (`operation`, `ok`, counters, arrays, `event`, `deletedEventId`)
+- write probes validate `create -> update -> delete` on outgoing calendar
 
 Optional write probe:
 
