@@ -30,6 +30,7 @@ Supported operations:
 - `search`
 - `open`
 - `create`
+- `delete`
 
 ---
 
@@ -83,6 +84,8 @@ Calendar access is locked by env vars:
 
 - `APPLE_MCP_CALENDAR_INCOMING` for read scope
 - `APPLE_MCP_CALENDAR_OUTGOING` for write scope
+
+Write operations (`create`, `delete`) are restricted to the outgoing calendar.
 
 If either variable is missing, calendar operations are disabled.
 

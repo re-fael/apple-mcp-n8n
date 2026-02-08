@@ -6,12 +6,13 @@ const CALENDAR_OPERATIONS = [
   "list",
   "listCalendars",
   "create",
+  "delete",
 ] as const;
 
 const CALENDAR_TOOL: Tool = {
   name: "calendar",
   description:
-    "Search, create, and open calendar events in Apple Calendar app. Use operation=list for date-range availability and operation=search for keyword filtering. Calendar access is locked to incoming/outgoing calendars. Returned startDate/endDate values are ISO 8601 UTC strings.",
+    "Search, create, delete, and open calendar events in Apple Calendar app. Use operation=list for date-range availability and operation=search for keyword filtering. Calendar access is locked to incoming/outgoing calendars. Returned startDate/endDate values are ISO 8601 UTC strings.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -19,7 +20,7 @@ const CALENDAR_TOOL: Tool = {
       operation: {
         type: "string",
         description:
-          "Operation to perform: 'search', 'open', 'list', 'listCalendars', or 'create'. Use 'list' for date-only availability checks; use 'search' for keyword filtering.",
+          "Operation to perform: 'search', 'open', 'list', 'listCalendars', 'create', or 'delete'. Use 'list' for date-only availability checks; use 'search' for keyword filtering.",
         enum: [...CALENDAR_OPERATIONS],
       },
       searchText: {
@@ -29,7 +30,7 @@ const CALENDAR_TOOL: Tool = {
       },
       eventId: {
         type: "string",
-        description: "ID of the event to open (required for open operation)",
+        description: "ID of the event to open/delete (required for open/delete operations)",
       },
       limit: {
         type: "integer",
@@ -77,7 +78,7 @@ const CALENDAR_TOOL: Tool = {
       calendarName: {
         type: "string",
         description:
-          "Name of the calendar to target (optional for list/search/create; list/search use both allowed locked calendars if omitted, create uses outgoing calendar if omitted)",
+          "Name of the calendar to target (optional for list/search/create/delete; list/search use both allowed locked calendars if omitted, create/delete use outgoing calendar if omitted)",
       },
     },
     required: ["operation"],
@@ -124,6 +125,12 @@ const CALENDAR_TOOL: Tool = {
       event: {
         type: "object",
         additionalProperties: true,
+      },
+      deletedEventId: {
+        type: "string",
+      },
+      deletedFromCalendar: {
+        type: "string",
       },
     },
     required: ["operation", "ok", "isError", "content"],

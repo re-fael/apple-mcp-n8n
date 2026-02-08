@@ -549,12 +549,111 @@ async function openEvent(
 	}
 }
 
+async function deleteEvent(
+	eventId: string,
+	calendarName?: string,
+): Promise<{
+	success: boolean;
+	message: string;
+	deletedEventId?: string;
+	deletedFromCalendar?: string;
+}> {
+	try {
+		const trimmedEventId = String(eventId ?? "").trim();
+		if (!trimmedEventId) {
+			return { success: false, message: "eventId is required for delete operation" };
+		}
+
+		const lock = getCalendarLock();
+		const ek = await ensureCalendarAccess();
+		const { outgoingCalendar } = resolveLockedCalendars(ek, lock);
+		const outgoingLower = lock.outgoing.toLowerCase();
+
+		if (calendarName) {
+			const requested = calendarName.trim().toLowerCase();
+			if (requested && requested !== outgoingLower) {
+				return {
+					success: false,
+					message: `Calendar "${calendarName}" is not writable. Use outgoing calendar "${lock.outgoing}".`,
+				};
+			}
+		}
+
+		logCalendar("deleteEvent start", {
+			eventId: trimmedEventId,
+			calendarName: lock.outgoing,
+		});
+
+		const event = ek.getEvent(trimmedEventId);
+		if (!event) {
+			logCalendar("deleteEvent result", { success: false, eventId: trimmedEventId });
+			return { success: false, message: "Event not found" };
+		}
+
+		const eventCalendarName = getEventCalendarName(event);
+		const outgoingCalendarId = getCalendarId(outgoingCalendar);
+		const eventCalendarId =
+			getCalendarId(event?.calendar) ||
+			String(event?.calendarIdentifier ?? event?.calendarId ?? "");
+		const isOutgoingById =
+			eventCalendarId.length > 0 &&
+			outgoingCalendarId.length > 0 &&
+			eventCalendarId === outgoingCalendarId;
+		const isOutgoingByName =
+			eventCalendarName.length > 0 &&
+			eventCalendarName.toLowerCase() === outgoingLower;
+		if (!isOutgoingById && !isOutgoingByName) {
+			logCalendar("deleteEvent denied", {
+				eventId: trimmedEventId,
+				eventCalendarName,
+			});
+			return {
+				success: false,
+				message: `Event is not in writable calendar "${lock.outgoing}".`,
+			};
+		}
+
+		const removed = await Promise.resolve(
+			ek.removeEvent(trimmedEventId, "thisEvent", true),
+		);
+		if (!removed) {
+			logCalendar("deleteEvent result", {
+				success: false,
+				eventId: trimmedEventId,
+				reason: "removeEvent returned false",
+			});
+			return { success: false, message: "Failed to delete event" };
+		}
+
+		const deletedFromCalendar = eventCalendarName || lock.outgoing;
+		logCalendar("deleteEvent result", {
+			success: true,
+			eventId: trimmedEventId,
+			deletedFromCalendar,
+		});
+		return {
+			success: true,
+			message: "Event deleted successfully.",
+			deletedEventId: trimmedEventId,
+			deletedFromCalendar,
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		logCalendar("deleteEvent error", { error: message });
+		return {
+			success: false,
+			message: message,
+		};
+	}
+}
+
 const calendar = {
 	searchEvents,
 	openEvent,
 	getEvents,
 	listCalendars,
 	createEvent,
+	deleteEvent,
 };
 
 export default calendar;

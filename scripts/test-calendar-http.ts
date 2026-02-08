@@ -28,7 +28,7 @@ function sortedUnique(values: string[]): string[] {
 
 function assertStructuredCalendarResult(
 	result: any,
-	expectedOperation: "search" | "open" | "list" | "listCalendars" | "create",
+	expectedOperation: "search" | "open" | "list" | "listCalendars" | "create" | "delete",
 ) {
 	assert(
 		result?.structuredContent && typeof result.structuredContent === "object",
@@ -147,6 +147,7 @@ async function run(): Promise<void> {
 		);
 	}
 	const createExposed = operationEnum.includes("create");
+	const deleteExposed = operationEnum.includes("delete");
 	console.log(`tools/list calendar operations: ${operationEnum.join(", ")}`);
 	assert(
 		calendarTool?.outputSchema && typeof calendarTool.outputSchema === "object",
@@ -231,7 +232,35 @@ async function run(): Promise<void> {
 	assert(disallowedCreate?.ok === false, "disallowed create should include ok=false.");
 	assertStructuredCalendarResult(disallowedCreate, "create");
 
-	const defaultList = await callTool(url, 6, "calendar", {
+	const disallowedDelete = await callTool(url, 6, "calendar", {
+		operation: "delete",
+		eventId: "non-existent-event-id-for-policy-probe",
+		calendarName: "__NON_WRITABLE_CALENDAR__",
+	});
+	assert(
+		disallowedDelete?.isError === true,
+		"Expected blocked calendar.delete probe to return isError=true.",
+	);
+	const deleteErrorText = extractText(disallowedDelete).toLowerCase();
+	if (deleteExposed) {
+		assert(
+			deleteErrorText.includes("not writable"),
+			'Expected "not writable" error text for blocked calendar.delete.',
+		);
+	} else {
+		assert(
+			deleteErrorText.includes("disabled") || deleteErrorText.includes("blocked"),
+			'Expected policy block text ("disabled"/"blocked") when delete is not exposed.',
+		);
+	}
+	assert(
+		disallowedDelete?.operation === "delete",
+		"disallowed delete should include operation=delete.",
+	);
+	assert(disallowedDelete?.ok === false, "disallowed delete should include ok=false.");
+	assertStructuredCalendarResult(disallowedDelete, "delete");
+
+	const defaultList = await callTool(url, 7, "calendar", {
 		operation: "list",
 		limit: 3,
 	});
@@ -269,7 +298,7 @@ async function run(): Promise<void> {
 	}
 	console.log(`calendar.list succeeded, eventsCount=${defaultList?.eventsCount ?? "n/a"}`);
 
-	const searchProbe = await callTool(url, 7, "calendar", {
+	const searchProbe = await callTool(url, 8, "calendar", {
 		operation: "search",
 		searchText: "",
 		limit: 2,
@@ -292,7 +321,7 @@ async function run(): Promise<void> {
 		let openSucceeded = false;
 		let lastError = "";
 		for (const event of defaultList.events.slice(0, 5)) {
-			const openProbe = await callTool(url, 8, "calendar", {
+			const openProbe = await callTool(url, 9, "calendar", {
 				operation: "open",
 				eventId: String(event.id),
 			});
@@ -326,7 +355,7 @@ async function run(): Promise<void> {
 				? calendars[calendars.length - 1]
 				: undefined;
 		assert(Boolean(outgoingCalendar), "No outgoing calendar available for write probe.");
-		const writeResult = await callTool(url, 9, "calendar", {
+		const writeResult = await callTool(url, 10, "calendar", {
 			operation: "create",
 			title: `Calendar write probe ${Date.now()}`,
 			startDate: new Date(Date.now() + 90 * 60 * 1000).toISOString(),
@@ -343,6 +372,35 @@ async function run(): Promise<void> {
 			"calendar.create response event.id is missing.",
 		);
 		console.log(`calendar.create write probe succeeded on "${outgoingCalendar}".`);
+		if (deleteExposed) {
+			const deleteWriteProbe = await callTool(url, 11, "calendar", {
+				operation: "delete",
+				eventId: String(writeResult.event.id),
+				calendarName: outgoingCalendar,
+			});
+			assert(
+				!deleteWriteProbe?.isError,
+				`Outgoing delete probe failed: ${extractText(deleteWriteProbe)}`,
+			);
+			assert(
+				deleteWriteProbe?.operation === "delete",
+				"calendar.delete.operation mismatch.",
+			);
+			assert(
+				deleteWriteProbe?.ok === true,
+				"calendar.delete.ok should be true for write probe.",
+			);
+			assertStructuredCalendarResult(deleteWriteProbe, "delete");
+			assert(
+				deleteWriteProbe?.deletedEventId === writeResult.event.id,
+				"calendar.delete should return deletedEventId for deleted write probe event.",
+			);
+			console.log(`calendar.delete write probe succeeded on "${outgoingCalendar}".`);
+		} else {
+			console.log(
+				"Skipping delete write probe because delete is hidden by tool policy.",
+			);
+		}
 	} else if (allowWriteProbe && !createExposed) {
 		console.log(
 			"Skipping outgoing calendar write probe because create is hidden by tool policy.",

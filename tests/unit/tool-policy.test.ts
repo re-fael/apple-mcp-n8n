@@ -72,9 +72,11 @@ write = false
 
       const readDecision = getToolAccessDecision(config, "calendar", "list");
       const writeDecision = getToolAccessDecision(config, "calendar", "create");
+      const deleteDecision = getToolAccessDecision(config, "calendar", "delete");
 
       expect(readDecision.allowed).toBe(true);
       expect(writeDecision.allowed).toBe(false);
+      expect(deleteDecision.allowed).toBe(false);
       expect(writeDecision.reason).toContain(
         'Write operations are disabled for tool "calendar"',
       );
@@ -121,9 +123,11 @@ write = false
       const outputOperations = getOperationEnumFromOutputSchema(calendarTool);
 
       expect(operations.includes("create")).toBe(false);
+      expect(operations.includes("delete")).toBe(false);
       expect(operations.includes("list")).toBe(true);
       expect(operations.includes("search")).toBe(true);
       expect(outputOperations.includes("create")).toBe(false);
+      expect(outputOperations.includes("delete")).toBe(false);
 
       expect(sortedUnique(outputOperations)).toEqual(sortedUnique(operations));
     } finally {

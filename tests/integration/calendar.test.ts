@@ -398,6 +398,62 @@ describe("Calendar Integration Tests", () => {
     }, 10000);
   });
 
+  describe("deleteEvent", () => {
+    it("should delete an existing event in outgoing calendar", async () => {
+      const start = new Date();
+      start.setDate(start.getDate() + 5);
+      start.setHours(11, 0, 0, 0);
+      const end = new Date(start);
+      end.setHours(12, 0, 0, 0);
+
+      const title = `Delete Test Event ${Date.now()}`;
+      const created = await calendarModule.createEvent(
+        title,
+        start.toISOString(),
+        end.toISOString(),
+        "Delete Test Location",
+        "Delete test notes",
+        false,
+        OUTGOING_CALENDAR,
+      );
+
+      if (!created.success && isCalendarUnavailable(created.message)) {
+        console.log(`ℹ️ Skipping delete assertion due to calendar unavailability: ${created.message}`);
+        expect(created.success).toBe(false);
+        return;
+      }
+
+      expect(created.success).toBe(true);
+      expect(created.eventId).toBeTruthy();
+
+      const deleted = await calendarModule.deleteEvent(created.eventId!, OUTGOING_CALENDAR);
+      expect(deleted.success).toBe(true);
+      expect(deleted.deletedEventId).toBe(created.eventId);
+      console.log(`✅ Deleted event: "${title}" (${created.eventId})`);
+    }, 20000);
+
+    it("should reject deleting from non-writable calendar name", async () => {
+      const result = await runOrSkipUnavailable(
+        "deleteEvent(non writable)",
+        () =>
+          calendarModule.deleteEvent(
+            "non-existent-event-id-12345",
+            INCOMING_CALENDAR,
+          ),
+      );
+      if (result === null) return;
+      if (isCalendarUnavailable(result.message)) {
+        console.log(`ℹ️ Skipping delete non-writable assertion due to calendar unavailability: ${result.message}`);
+        expect(result.success).toBe(false);
+        return;
+      }
+
+      expect(result.success).toBe(false);
+      expect(result.message.toLowerCase()).toContain("not writable");
+      console.log("✅ deleteEvent correctly blocks non-writable calendar target");
+    }, 10000);
+  });
+
   describe("Error Handling", () => {
     it("should handle invalid date formats gracefully", async () => {
       try {

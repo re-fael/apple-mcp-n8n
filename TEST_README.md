@@ -54,7 +54,7 @@ tests/
 - operation enum is policy-aware
 - `outputSchema` operation enum is aligned with input operation enum
 - blocked calendar enforcement (`not allowed`, `not writable`, policy blocks)
-- structured response keys (`operation`, `ok`, counters, arrays, event)
+- structured response keys (`operation`, `ok`, counters, arrays, `event`, `deletedEventId`)
 
 Optional write probe:
 

@@ -42,6 +42,7 @@ const TOOL_OPERATION_MODE: Record<KnownToolName, Record<string, AccessMode>> = {
     list: "read",
     listCalendars: "read",
     create: "write",
+    delete: "write",
   },
 };
 

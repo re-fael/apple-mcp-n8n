@@ -16,7 +16,13 @@ import {
   summarizeToolAccess,
 } from "./utils/tool-policy.js";
 
-type CalendarOperation = "search" | "open" | "list" | "listCalendars" | "create";
+type CalendarOperation =
+  | "search"
+  | "open"
+  | "list"
+  | "listCalendars"
+  | "create"
+  | "delete";
 type ToolContentItem = { type: "text"; text: string };
 
 type CalendarStructuredContent = {
@@ -38,6 +44,8 @@ type CalendarStructuredContent = {
     isAllDay: boolean;
     calendarName: string | null;
   };
+  deletedEventId?: string;
+  deletedFromCalendar?: string;
   tool?: string;
 };
 
@@ -60,6 +68,7 @@ type CalendarToolArgs = {
 const SERVER_INSTRUCTIONS_BASE = [
   "Apple Calendar MCP exposes only calendar operations for Apple Calendar.",
   "Use operation=list for date-based availability and operation=search for keyword filtering.",
+  "Use operation=delete with eventId to remove an event from the writable calendar.",
   "Calendar operations are locked to APPLE_MCP_CALENDAR_INCOMING (read) and APPLE_MCP_CALENDAR_OUTGOING (write).",
   "Use ISO 8601 dates (YYYY-MM-DD) or timestamps (YYYY-MM-DDTHH:mm:ssZ).",
   "Date/time values returned by tools use ISO 8601 UTC strings.",
@@ -76,7 +85,8 @@ function isCalendarOperation(value: unknown): value is CalendarOperation {
     value === "open" ||
     value === "list" ||
     value === "listCalendars" ||
-    value === "create"
+    value === "create" ||
+    value === "delete"
   );
 }
 
@@ -139,8 +149,9 @@ function isCalendarArgs(value: unknown): value is CalendarToolArgs {
 function validateCalendarArgs(args: CalendarToolArgs): void {
   switch (args.operation) {
     case "open":
+    case "delete":
       if (!args.eventId?.trim()) {
-        throw new Error("eventId is required for open operation");
+        throw new Error("eventId is required for open/delete operations");
       }
       return;
 
@@ -327,6 +338,28 @@ async function main() {
           return calendarResult({
             content: asText(result.success ? result.message : `Error creating event: ${result.message}`),
             ...(event ? { event } : {}),
+            operation,
+            ok: result.success,
+            isError: !result.success,
+          });
+        }
+
+        case "delete": {
+          const result = await calendarModule.deleteEvent(
+            rawArgs.eventId!,
+            rawArgs.calendarName,
+          );
+
+          return calendarResult({
+            content: asText(result.success ? result.message : `Error deleting event: ${result.message}`),
+            ...(result.success && result.deletedEventId
+              ? {
+                  deletedEventId: result.deletedEventId,
+                  ...(result.deletedFromCalendar
+                    ? { deletedFromCalendar: result.deletedFromCalendar }
+                    : {}),
+                }
+              : {}),
             operation,
             ok: result.success,
             isError: !result.success,
