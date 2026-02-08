@@ -346,11 +346,13 @@ async function getEvents(
 		return events;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		console.error(`Error getting events: ${message}`);
-		logCalendar("getEvents error", { error: message });
 		if (isCalendarLockError(message)) {
+			console.log(`getEvents - blocked by calendar policy: ${message}`);
+			logCalendar("getEvents blocked", { error: message });
 			throw new Error(message);
 		}
+		console.error(`Error getting events: ${message}`);
+		logCalendar("getEvents error", { error: message });
 		if (
 			message.includes("fromDate") ||
 			message.includes("toDate") ||
