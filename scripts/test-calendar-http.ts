@@ -26,27 +26,6 @@ function sortedUnique(values: string[]): string[] {
 	return Array.from(new Set(values)).sort();
 }
 
-function getOperationConstsFromOneOf(inputSchema: any): string[] {
-	const oneOf = inputSchema?.oneOf;
-	if (!Array.isArray(oneOf)) return [];
-
-	return oneOf
-		.map((branch: any) => {
-			const operationConst = branch?.properties?.operation?.const;
-			return typeof operationConst === "string" ? operationConst : null;
-		})
-		.filter((value: unknown): value is string => typeof value === "string");
-}
-
-function getOneOfTypes(inputSchema: any): string[] {
-	const oneOf = inputSchema?.oneOf;
-	if (!Array.isArray(oneOf)) return [];
-
-	return oneOf
-		.map((branch: any) => (typeof branch?.type === "string" ? branch.type : null))
-		.filter((value: unknown): value is string => typeof value === "string");
-}
-
 async function postJson(url: string, payload: Record<string, unknown>): Promise<JsonRpcResponse> {
 	const response = await fetch(url, {
 		method: "POST",
@@ -143,29 +122,6 @@ async function run(): Promise<void> {
 	}
 	const createExposed = operationEnum.includes("create");
 	console.log(`tools/list calendar operations: ${operationEnum.join(", ")}`);
-	assert(
-		Array.isArray(calendarTool?.inputSchema?.oneOf),
-		"Calendar inputSchema.oneOf is missing from tools/list exposure.",
-	);
-	const oneOfOperations = getOperationConstsFromOneOf(calendarTool?.inputSchema);
-	const oneOfTypes = getOneOfTypes(calendarTool?.inputSchema);
-	assert(
-		oneOfOperations.length > 0,
-		"Calendar inputSchema.oneOf operation branches are missing.",
-	);
-	assert(
-		oneOfTypes.length === oneOfOperations.length,
-		"Calendar inputSchema.oneOf branches must declare explicit object type.",
-	);
-	assert(
-		oneOfTypes.every((type) => type === "object"),
-		'Calendar inputSchema.oneOf branches must have type="object".',
-	);
-	assert(
-		JSON.stringify(sortedUnique(oneOfOperations)) ===
-			JSON.stringify(sortedUnique(operationEnum)),
-		"Calendar inputSchema.oneOf operation branches are not aligned with operation enum.",
-	);
 	assert(
 		calendarTool?.outputSchema && typeof calendarTool.outputSchema === "object",
 		"Calendar outputSchema is missing from tools/list exposure.",

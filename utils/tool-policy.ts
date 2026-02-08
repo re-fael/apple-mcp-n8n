@@ -319,24 +319,6 @@ function setOperationEnum(tool: Tool, operations: string[]): void {
   schema.properties.operation.enum = operations;
 }
 
-function filterInputSchemaOneOf(tool: Tool, allowedOperations: Set<string>): void {
-  const schema = (tool.inputSchema ?? {}) as {
-    oneOf?: unknown;
-  };
-  if (!Array.isArray(schema.oneOf)) return;
-
-  schema.oneOf = schema.oneOf.filter((branch) => {
-    if (!branch || typeof branch !== "object") return true;
-    const operationConst = (
-      branch as {
-        properties?: Record<string, { const?: unknown }>;
-      }
-    ).properties?.operation?.const;
-    if (typeof operationConst !== "string") return true;
-    return allowedOperations.has(operationConst);
-  });
-}
-
 function setOutputOperationEnum(tool: Tool, operations: string[]): void {
   const schema = (tool as Tool & {
     outputSchema?: {
@@ -381,7 +363,6 @@ export function getConfiguredTools(
     if (allowedOperations.length === 0) continue;
 
     setOperationEnum(tool, allowedOperations);
-    filterInputSchemaOneOf(tool, new Set(allowedOperations));
     setOutputOperationEnum(tool, allowedOperations);
     configuredTools.push(tool);
   }

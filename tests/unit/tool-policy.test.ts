@@ -46,32 +46,6 @@ function getOperationEnumFromInputSchema(tool: any): string[] {
   );
 }
 
-function getOperationConstsFromOneOf(tool: any): string[] {
-  const oneOf = (tool?.inputSchema as { oneOf?: unknown })?.oneOf;
-  if (!Array.isArray(oneOf)) return [];
-  return oneOf
-    .map((branch) => {
-      if (!branch || typeof branch !== "object") return null;
-      const operationConst = (
-        branch as { properties?: Record<string, { const?: unknown }> }
-      ).properties?.operation?.const;
-      return typeof operationConst === "string" ? operationConst : null;
-    })
-    .filter((value): value is string => typeof value === "string");
-}
-
-function getOneOfTypes(tool: any): string[] {
-  const oneOf = (tool?.inputSchema as { oneOf?: unknown })?.oneOf;
-  if (!Array.isArray(oneOf)) return [];
-  return oneOf
-    .map((branch) => {
-      if (!branch || typeof branch !== "object") return null;
-      const branchType = (branch as { type?: unknown }).type;
-      return typeof branchType === "string" ? branchType : null;
-    })
-    .filter((value): value is string => typeof value === "string");
-}
-
 function getOperationEnumFromOutputSchema(tool: any): string[] {
   const operationEnum = (
     (tool?.outputSchema as {
@@ -144,20 +118,14 @@ write = false
       expect(calendarTool).toBeTruthy();
 
       const operations = getOperationEnumFromInputSchema(calendarTool);
-      const oneOfOperations = getOperationConstsFromOneOf(calendarTool);
-      const oneOfTypes = getOneOfTypes(calendarTool);
       const outputOperations = getOperationEnumFromOutputSchema(calendarTool);
 
       expect(operations.includes("create")).toBe(false);
       expect(operations.includes("list")).toBe(true);
       expect(operations.includes("search")).toBe(true);
-      expect(oneOfOperations.includes("create")).toBe(false);
       expect(outputOperations.includes("create")).toBe(false);
 
-      expect(sortedUnique(oneOfOperations)).toEqual(sortedUnique(operations));
       expect(sortedUnique(outputOperations)).toEqual(sortedUnique(operations));
-      expect(oneOfTypes.length).toBe(oneOfOperations.length);
-      expect(oneOfTypes.every((type) => type === "object")).toBe(true);
     } finally {
       cleanupPath(configPath);
     }

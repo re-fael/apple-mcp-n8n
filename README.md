@@ -37,7 +37,8 @@ Supported operations:
 
 - Calendar-only scope
 - Policy-driven exposure (`config.ini`)
-- Strong schema contract (`inputSchema.oneOf` + `outputSchema`)
+- Strong schema contract (explicit operation enum + `outputSchema`)
+- LLM-parser friendly schema (flat, no `oneOf`/`anyOf`/type unions/pattern regex)
 - Structured responses (`operation`, `ok`, `isError`, counts, events)
 
 ---
@@ -122,6 +123,7 @@ Policy effects:
 
 ```bash
 bun run test:policy
+bun run test:schema
 bun run test:calendar
 bun run test:calendar-http
 CALENDAR_HTTP_ALLOW_WRITE=1 bun run test:calendar-http

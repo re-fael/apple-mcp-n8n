@@ -30,6 +30,7 @@
     "test:watch": "bun test ./tests --preload ./tests/setup.ts --watch",
     "test:calendar": "bun test tests/integration/calendar.test.ts --preload ./tests/setup.ts",
     "test:policy": "bun test tests/unit/tool-policy.test.ts",
+    "test:schema": "bun test tests/unit/schema-compat.test.ts",
     "test:calendar-http": "bun run scripts/test-calendar-http.ts",
     "test:mcp": "bun run scripts/test-calendar-http.ts"
   },

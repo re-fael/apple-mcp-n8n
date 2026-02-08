@@ -8,9 +8,6 @@ const CALENDAR_OPERATIONS = [
   "create",
 ] as const;
 
-const ISO_DATE_OR_DATETIME_PATTERN =
-  "^\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:?\\d{2})?)?$";
-
 const CALENDAR_TOOL: Tool = {
   name: "calendar",
   description:
@@ -35,20 +32,20 @@ const CALENDAR_TOOL: Tool = {
         description: "ID of the event to open (required for open operation)",
       },
       limit: {
-        type: "number",
+        type: "integer",
         description: "Number of events to retrieve (optional, default 10, max 50)",
+        minimum: 1,
+        maximum: 50,
       },
       fromDate: {
         type: "string",
         description:
           "Start date for search range in ISO 8601 format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ",
-        pattern: ISO_DATE_OR_DATETIME_PATTERN,
       },
       toDate: {
         type: "string",
         description:
           "End date for search range in ISO 8601 format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ",
-        pattern: ISO_DATE_OR_DATETIME_PATTERN,
       },
       title: {
         type: "string",
@@ -58,13 +55,11 @@ const CALENDAR_TOOL: Tool = {
         type: "string",
         description:
           "Event start date/time in ISO 8601 format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ",
-        pattern: ISO_DATE_OR_DATETIME_PATTERN,
       },
       endDate: {
         type: "string",
         description:
           "Event end date/time in ISO 8601 format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ",
-        pattern: ISO_DATE_OR_DATETIME_PATTERN,
       },
       location: {
         type: "string",
@@ -86,52 +81,6 @@ const CALENDAR_TOOL: Tool = {
       },
     },
     required: ["operation"],
-    oneOf: [
-      {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          operation: { const: "listCalendars" },
-        },
-        required: ["operation"],
-      },
-      {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          operation: { const: "open" },
-          eventId: { type: "string", minLength: 1 },
-        },
-        required: ["operation", "eventId"],
-      },
-      {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          operation: { const: "list" },
-        },
-        required: ["operation"],
-      },
-      {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          operation: { const: "search" },
-        },
-        required: ["operation"],
-      },
-      {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          operation: { const: "create" },
-          title: { type: "string", minLength: 1 },
-          startDate: { type: "string", pattern: ISO_DATE_OR_DATETIME_PATTERN },
-          endDate: { type: "string", pattern: ISO_DATE_OR_DATETIME_PATTERN },
-        },
-        required: ["operation", "title", "startDate", "endDate"],
-      },
-    ],
   },
   outputSchema: {
     type: "object",
@@ -152,12 +101,7 @@ const CALENDAR_TOOL: Tool = {
         type: "array",
         items: {
           type: "object",
-          additionalProperties: false,
-          properties: {
-            type: { type: "string" },
-            text: { type: "string" },
-          },
-          required: ["type", "text"],
+          additionalProperties: true,
         },
       },
       calendars: {
@@ -171,29 +115,7 @@ const CALENDAR_TOOL: Tool = {
         type: "array",
         items: {
           type: "object",
-          additionalProperties: false,
-          properties: {
-            id: { type: "string" },
-            title: { type: "string" },
-            location: { type: ["string", "null"] },
-            notes: { type: ["string", "null"] },
-            startDate: { type: ["string", "null"] },
-            endDate: { type: ["string", "null"] },
-            calendarName: { type: "string" },
-            isAllDay: { type: "boolean" },
-            url: { type: ["string", "null"] },
-          },
-          required: [
-            "id",
-            "title",
-            "location",
-            "notes",
-            "startDate",
-            "endDate",
-            "calendarName",
-            "isAllDay",
-            "url",
-          ],
+          additionalProperties: true,
         },
       },
       eventsCount: {
@@ -201,27 +123,7 @@ const CALENDAR_TOOL: Tool = {
       },
       event: {
         type: "object",
-        additionalProperties: false,
-        properties: {
-          id: { type: ["string", "null"] },
-          title: { type: "string" },
-          startDate: { type: ["string", "null"] },
-          endDate: { type: ["string", "null"] },
-          location: { type: ["string", "null"] },
-          notes: { type: ["string", "null"] },
-          isAllDay: { type: "boolean" },
-          calendarName: { type: ["string", "null"] },
-        },
-        required: [
-          "id",
-          "title",
-          "startDate",
-          "endDate",
-          "location",
-          "notes",
-          "isAllDay",
-          "calendarName",
-        ],
+        additionalProperties: true,
       },
     },
     required: ["operation", "ok", "isError", "content"],

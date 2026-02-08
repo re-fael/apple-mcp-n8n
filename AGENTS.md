@@ -17,8 +17,8 @@ This repository exposes a **calendar-only** Apple MCP server with stdio and HTTP
 - `tools/call` enforces policy and returns explicit block errors.
 - For calendar, policy filtering keeps schema exposure aligned across:
   - `inputSchema.properties.operation.enum`
-  - `inputSchema.oneOf` operation branches
   - `outputSchema.properties.operation.enum`
+- Schema is intentionally kept parser-friendly for agent runtimes (flat enum-driven input, no oneOf/anyOf/allOf).
 
 ## Calendar
 
@@ -31,7 +31,7 @@ This repository exposes a **calendar-only** Apple MCP server with stdio and HTTP
 
 - AI agents receive guidance from `initialize.result.instructions`.
 - Tool discovery comes from `tools/list` (`name`, `description`, `inputSchema`, operation enums).
-- Calendar tool discovery includes `inputSchema.oneOf` and `outputSchema`.
+- Calendar tool discovery includes `outputSchema`.
 - Runtime outputs come from `tools/call` (`content` + structured keys).
 - For `calendar`:
   - All operations return `operation`, `ok`, `isError`, and `content`.

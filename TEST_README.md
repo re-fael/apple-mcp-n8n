@@ -7,6 +7,7 @@ This document explains how to run tests for the calendar-only Apple MCP server.
 ```bash
 bun run test
 bun run test:policy
+bun run test:schema
 bun run test:calendar
 bun run test:calendar-http
 ```
@@ -51,7 +52,7 @@ tests/
 
 - `tools/list` exposes `calendar`
 - operation enum is policy-aware
-- `inputSchema.oneOf` and `outputSchema` are present and aligned
+- `outputSchema` operation enum is aligned with input operation enum
 - blocked calendar enforcement (`not allowed`, `not writable`, policy blocks)
 - structured response keys (`operation`, `ok`, counters, arrays, event)
 
