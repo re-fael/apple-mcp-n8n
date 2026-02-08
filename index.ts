@@ -17,6 +17,29 @@ import {
 } from "./utils/tool-policy.js";
 
 type CalendarOperation = "search" | "open" | "list" | "listCalendars" | "create";
+type ToolContentItem = { type: "text"; text: string };
+
+type CalendarStructuredContent = {
+  operation: CalendarOperation;
+  ok: boolean;
+  isError: boolean;
+  content: ToolContentItem[];
+  calendars?: string[];
+  calendarsCount?: number;
+  events?: Awaited<ReturnType<typeof calendarModule.getEvents>>;
+  eventsCount?: number;
+  event?: {
+    id: string | null;
+    title: string;
+    startDate: string | null;
+    endDate: string | null;
+    location: string | null;
+    notes: string | null;
+    isAllDay: boolean;
+    calendarName: string | null;
+  };
+  tool?: string;
+};
 
 type CalendarToolArgs = {
   operation: CalendarOperation;
@@ -45,6 +68,28 @@ const SERVER_INSTRUCTIONS_BASE = [
 
 function asText(text: string) {
   return [{ type: "text", text }];
+}
+
+function isCalendarOperation(value: unknown): value is CalendarOperation {
+  return (
+    value === "search" ||
+    value === "open" ||
+    value === "list" ||
+    value === "listCalendars" ||
+    value === "create"
+  );
+}
+
+function coerceOperation(value: unknown, fallback: CalendarOperation = "search"): CalendarOperation {
+  return isCalendarOperation(value) ? value : fallback;
+}
+
+function calendarResult(structured: CalendarStructuredContent) {
+  return {
+    content: structured.content,
+    structuredContent: structured,
+    ...structured,
+  };
 }
 
 function formatEventListHeader(operation: "list" | "search", count: number): string {
@@ -84,9 +129,7 @@ function isCalendarArgs(value: unknown): value is CalendarToolArgs {
   if (!value || typeof value !== "object") return false;
 
   const operation = (value as { operation?: unknown }).operation;
-  if (typeof operation !== "string") return false;
-
-  if (!["search", "open", "list", "listCalendars", "create"].includes(operation)) {
+  if (!isCalendarOperation(operation)) {
     return false;
   }
 
@@ -123,13 +166,14 @@ function validateCalendarArgs(args: CalendarToolArgs): void {
 }
 
 function buildPolicyDeniedResult(toolName: string, operation?: string, reason?: string) {
-  return {
+  const coercedOperation = coerceOperation(operation);
+  return calendarResult({
     content: asText(reason ?? `Tool "${toolName}" is blocked by policy.`),
     tool: toolName,
-    operation: operation ?? null,
+    operation: coercedOperation,
     ok: false,
     isError: true,
-  };
+  });
 }
 
 async function main() {
@@ -197,7 +241,7 @@ async function main() {
       switch (operation) {
         case "listCalendars": {
           const calendars = await calendarModule.listCalendars();
-          return {
+          return calendarResult({
             content: asText(
               calendars.length > 0
                 ? `Available calendars (${calendars.length}):\n\n${calendars.map((c) => `- ${c}`).join("\n")}`
@@ -208,7 +252,7 @@ async function main() {
             operation,
             ok: true,
             isError: false,
-          };
+          });
         }
 
         case "list": {
@@ -218,14 +262,14 @@ async function main() {
             rawArgs.toDate,
             rawArgs.calendarName,
           );
-          return {
+          return calendarResult({
             content: asText(formatEventsText(operation, events)),
             events,
             eventsCount: events.length,
             operation,
             ok: true,
             isError: false,
-          };
+          });
         }
 
         case "search": {
@@ -236,24 +280,24 @@ async function main() {
             rawArgs.toDate,
             rawArgs.calendarName,
           );
-          return {
+          return calendarResult({
             content: asText(formatEventsText(operation, events)),
             events,
             eventsCount: events.length,
             operation,
             ok: true,
             isError: false,
-          };
+          });
         }
 
         case "open": {
           const result = await calendarModule.openEvent(rawArgs.eventId!);
-          return {
+          return calendarResult({
             content: asText(result.success ? "Event found" : `Error opening event: ${result.message}`),
             operation,
             ok: result.success,
             isError: !result.success,
-          };
+          });
         }
 
         case "create": {
@@ -280,26 +324,26 @@ async function main() {
               }
             : undefined;
 
-          return {
+          return calendarResult({
             content: asText(result.success ? result.message : `Error creating event: ${result.message}`),
             ...(event ? { event } : {}),
             operation,
             ok: result.success,
             isError: !result.success,
-          };
+          });
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const args = request.params.arguments as { operation?: unknown } | undefined;
-      const operation = typeof args?.operation === "string" ? args.operation : null;
-      return {
+      const operation = coerceOperation(args?.operation);
+      return calendarResult({
         content: asText(message),
         tool: request.params.name,
         operation,
         ok: false,
         isError: true,
-      };
+      });
     }
   });
 

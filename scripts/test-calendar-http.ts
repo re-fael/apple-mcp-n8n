@@ -26,6 +26,32 @@ function sortedUnique(values: string[]): string[] {
 	return Array.from(new Set(values)).sort();
 }
 
+function assertStructuredCalendarResult(
+	result: any,
+	expectedOperation: "search" | "open" | "list" | "listCalendars" | "create",
+) {
+	assert(
+		result?.structuredContent && typeof result.structuredContent === "object",
+		`${expectedOperation}: structuredContent is missing.`,
+	);
+	assert(
+		result.structuredContent.operation === expectedOperation,
+		`${expectedOperation}: structuredContent.operation mismatch.`,
+	);
+	assert(
+		result.structuredContent.ok === result.ok,
+		`${expectedOperation}: structuredContent.ok must mirror top-level ok.`,
+	);
+	assert(
+		result.structuredContent.isError === result.isError,
+		`${expectedOperation}: structuredContent.isError must mirror top-level isError.`,
+	);
+	assert(
+		Array.isArray(result.structuredContent.content),
+		`${expectedOperation}: structuredContent.content is missing.`,
+	);
+}
+
 async function postJson(url: string, payload: Record<string, unknown>): Promise<JsonRpcResponse> {
 	const response = await fetch(url, {
 		method: "POST",
@@ -155,6 +181,7 @@ async function run(): Promise<void> {
 	);
 	assert(listCalendars?.operation === "listCalendars", "listCalendars.operation mismatch.");
 	assert(listCalendars?.ok === true, "listCalendars.ok should be true.");
+	assertStructuredCalendarResult(listCalendars, "listCalendars");
 	console.log(`Locked calendars visible: ${calendars.join(", ")}`);
 
 	const disallowedList = await callTool(url, 4, "calendar", {
@@ -172,6 +199,7 @@ async function run(): Promise<void> {
 	);
 	assert(disallowedList?.operation === "list", "disallowed list should include operation=list.");
 	assert(disallowedList?.ok === false, "disallowed list should include ok=false.");
+	assertStructuredCalendarResult(disallowedList, "list");
 
 	const disallowedCreate = await callTool(url, 5, "calendar", {
 		operation: "create",
@@ -201,6 +229,7 @@ async function run(): Promise<void> {
 		"disallowed create should include operation=create.",
 	);
 	assert(disallowedCreate?.ok === false, "disallowed create should include ok=false.");
+	assertStructuredCalendarResult(disallowedCreate, "create");
 
 	const defaultList = await callTool(url, 6, "calendar", {
 		operation: "list",
@@ -218,6 +247,7 @@ async function run(): Promise<void> {
 	);
 	assert(defaultList?.operation === "list", "calendar.list.operation mismatch.");
 	assert(defaultList?.ok === true, "calendar.list.ok should be true.");
+	assertStructuredCalendarResult(defaultList, "list");
 	for (const event of defaultList.events) {
 		assert(typeof event?.id === "string" && event.id.length > 0, "calendar.list event.id is missing.");
 		assert(
@@ -255,6 +285,7 @@ async function run(): Promise<void> {
 	);
 	assert(searchProbe?.operation === "search", "calendar.search.operation mismatch.");
 	assert(searchProbe?.ok === true, "calendar.search.ok should be true.");
+	assertStructuredCalendarResult(searchProbe, "search");
 	console.log(`calendar.search succeeded, eventsCount=${searchProbe.eventsCount}`);
 
 	if (defaultList.events.length > 0) {
@@ -268,6 +299,7 @@ async function run(): Promise<void> {
 			if (!openProbe?.isError) {
 				assert(openProbe?.operation === "open", "calendar.open.operation mismatch.");
 				assert(openProbe?.ok === true, "calendar.open.ok should be true.");
+				assertStructuredCalendarResult(openProbe, "open");
 				openSucceeded = true;
 				break;
 			}
@@ -305,6 +337,7 @@ async function run(): Promise<void> {
 		assert(writeResult?.event, "calendar.create response is missing event object.");
 		assert(writeResult?.operation === "create", "calendar.create.operation mismatch.");
 		assert(writeResult?.ok === true, "calendar.create.ok should be true.");
+		assertStructuredCalendarResult(writeResult, "create");
 		assert(
 			typeof writeResult.event?.id === "string" && writeResult.event.id.length > 0,
 			"calendar.create response event.id is missing.",
