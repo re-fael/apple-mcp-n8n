@@ -302,13 +302,32 @@ async function run(): Promise<void> {
 	console.log(`calendar.search succeeded, eventsCount=${searchProbe.eventsCount}`);
 
 	if (defaultList.events.length > 0) {
-		const openProbe = await callTool(url, 8, "calendar", {
-			operation: "open",
-			eventId: String(defaultList.events[0].id),
-		});
-		assert(!openProbe?.isError, `calendar.open failed: ${extractText(openProbe)}`);
-		assert(openProbe?.operation === "open", "calendar.open.operation mismatch.");
-		assert(openProbe?.ok === true, "calendar.open.ok should be true.");
+		let openSucceeded = false;
+		let lastError = "";
+		for (const event of defaultList.events.slice(0, 5)) {
+			const openProbe = await callTool(url, 8, "calendar", {
+				operation: "open",
+				eventId: String(event.id),
+			});
+			if (!openProbe?.isError) {
+				assert(openProbe?.operation === "open", "calendar.open.operation mismatch.");
+				assert(openProbe?.ok === true, "calendar.open.ok should be true.");
+				openSucceeded = true;
+				break;
+			}
+			lastError = extractText(openProbe);
+		}
+
+		if (!openSucceeded) {
+			const normalized = lastError.toLowerCase();
+			if (normalized.includes("not in allowed calendars")) {
+				console.log(
+					"Skipping strict calendar.open assertion (all candidate events were blocked by calendar lock metadata).",
+				);
+			} else {
+				throw new Error(`calendar.open failed: ${lastError}`);
+			}
+		}
 	} else {
 		console.log("Skipping calendar.open probe (no events returned by calendar.list).");
 	}

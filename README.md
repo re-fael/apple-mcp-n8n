@@ -1,7 +1,7 @@
-# apple-mcp-n8n
+# apple-calendar-mcp
 
 <p align="center">
-  <strong>Apple app automation through MCP, designed for n8n AI agents.</strong>
+  <strong>Apple Calendar automation through MCP, optimized for n8n AI agents.</strong>
 </p>
 
 <p align="center">
@@ -12,41 +12,37 @@
   <a href="https://github.com/re-fael/apple-mcp-n8n"><img alt="repository" src="https://img.shields.io/badge/github-re--fael%2Fapple--mcp--n8n-111827?style=for-the-badge"></a>
   <img alt="transport" src="https://img.shields.io/badge/transport-stdio%20%2B%20http-1d4ed8?style=for-the-badge">
   <img alt="runtime" src="https://img.shields.io/badge/runtime-bun%20%7C%20node-0f766e?style=for-the-badge">
-  <img alt="focus" src="https://img.shields.io/badge/focus-calendar%20safety-b45309?style=for-the-badge">
+  <img alt="focus" src="https://img.shields.io/badge/focus-calendar--only-b45309?style=for-the-badge">
 </p>
 
 ---
 
 ## Overview
 
-`apple-mcp-n8n` exposes Apple apps as MCP tools with policy controls and predictable outputs for agent workflows.
+`apple-calendar-mcp` exposes a single MCP tool: `calendar`.
 
-Available tools:
+The server is intentionally narrowed to calendar-only operations for better reliability and cleaner agent behavior in n8n.
 
-| Tool | What it does |
-|---|---|
-| `contacts` | Search contacts and phone numbers |
-| `notes` | Search, list, and create notes |
-| `messages` | Read, send, schedule, and check unread messages |
-| `mail` | Read/search/send emails and list accounts/mailboxes |
-| `reminders` | List/search/open/create reminders |
-| `calendar` | List/search/open/create events with locked read/write calendars |
-| `maps` | Search, save, pin, directions, and guide operations |
+Supported operations:
+
+- `listCalendars`
+- `list`
+- `search`
+- `open`
+- `create`
 
 ---
 
 ## Why this version
 
-This fork is focused on safe and reliable agent execution:
-
-- `config.ini` controls tool enablement + read/write capability per tool
-- `tools/list` is filtered by active policy
-- `calendar` exposes strong MCP contract (`inputSchema.oneOf`, `outputSchema`)
-- calendar responses include `operation`, `ok`, `isError`, and structured result fields
+- Calendar-only scope
+- Policy-driven exposure (`config.ini`)
+- Strong schema contract (`inputSchema.oneOf` + `outputSchema`)
+- Structured responses (`operation`, `ok`, `isError`, counts, events)
 
 ---
 
-## Quick start
+## Quick Start
 
 ### 1. Install dependencies
 
@@ -80,68 +76,18 @@ http://127.0.0.1:8787/mcp
 
 ---
 
-## Basic usage
-
-### List locked calendars
-
-```json
-{
-  "operation": "listCalendars"
-}
-```
-
-### List events for a date range
-
-```json
-{
-  "operation": "list",
-  "fromDate": "2026-02-07",
-  "toDate": "2026-02-14",
-  "limit": 10
-}
-```
-
-### Search events by keyword
-
-```json
-{
-  "operation": "search",
-  "searchText": "meeting",
-  "limit": 10
-}
-```
-
-### Create an event on writable calendar
-
-```json
-{
-  "operation": "create",
-  "title": "Project sync",
-  "startDate": "2026-02-08T15:00:00Z",
-  "endDate": "2026-02-08T15:30:00Z",
-  "calendarName": "🤖AKAI"
-}
-```
-
----
-
-## Calendar model and safety
+## Calendar Safety Model
 
 Calendar access is locked by env vars:
 
-- `APPLE_MCP_CALENDAR_INCOMING`: read scope
-- `APPLE_MCP_CALENDAR_OUTGOING`: write scope
+- `APPLE_MCP_CALENDAR_INCOMING` for read scope
+- `APPLE_MCP_CALENDAR_OUTGOING` for write scope
 
 If either variable is missing, calendar operations are disabled.
 
-The server explicitly rejects:
-
-- list/search on calendars outside allowed lock set
-- create on non-writable calendar names
-
 ---
 
-## Tool policy (`config.ini`)
+## Tool Policy (`config.ini`)
 
 Example:
 
@@ -155,29 +101,24 @@ write = true
 enabled = true
 read = true
 write = false
-
-[tool.messages]
-enabled = true
-read = true
-write = false
 ```
 
 Policy effects:
 
-- blocked tools/operations are hidden from `tools/list`
-- blocked calls return clear policy errors in `tools/call`
+- blocked operations are hidden from `tools/list`
+- blocked calls return explicit policy errors in `tools/call`
 
 ---
 
-## n8n integration notes
+## n8n Integration
 
-- Use n8n MCP Client node against `http://127.0.0.1:8787/mcp`
-- Let the agent consume structured fields first (`events`, `event`, counters)
-- Treat `content[].text` as human-readable summary, not the only data source
+- Use n8n MCP Client node with `http://127.0.0.1:8787/mcp`
+- Prefer structured fields (`events`, `event`, counters)
+- Treat `content[].text` as summary text only
 
 ---
 
-## Validation and tests
+## Validation & Tests
 
 ```bash
 bun run test:policy
@@ -188,21 +129,20 @@ CALENDAR_HTTP_ALLOW_WRITE=1 bun run test:calendar-http
 
 ---
 
-## Documentation links
+## Documentation
 
-- Agent/project notes: [`AGENTS.md`](./AGENTS.md)
+- Agent notes: [`AGENTS.md`](./AGENTS.md)
 - Test guide: [`TEST_README.md`](./TEST_README.md)
 - Policy file: [`config.ini`](./config.ini)
-- Calendar HTTP validation script: [`scripts/test-calendar-http.ts`](./scripts/test-calendar-http.ts)
-- n8n MCP Client docs: https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-langchain.mcpClient/
-- MCP specification: https://modelcontextprotocol.io/specification
+- HTTP validation script: [`scripts/test-calendar-http.ts`](./scripts/test-calendar-http.ts)
+- n8n MCP docs: https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-langchain.mcpClient/
+- MCP spec: https://modelcontextprotocol.io/specification
 
 ---
 
 ## Repository
 
 - Main repo: https://github.com/re-fael/apple-mcp-n8n
-- Upstream base: https://github.com/dhravya/apple-mcp
 - Original base project: https://github.com/supermemoryai/apple-mcp
 
 > Experimental project, made with Codex.
