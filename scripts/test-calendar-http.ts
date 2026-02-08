@@ -184,6 +184,38 @@ async function run(): Promise<void> {
 	assert(listCalendars?.ok === true, "listCalendars.ok should be true.");
 	assertStructuredCalendarResult(listCalendars, "listCalendars");
 	console.log(`Locked calendars visible: ${calendars.join(", ")}`);
+	for (const calendarName of calendars) {
+		const byCalendarList = await callTool(url, 31, "calendar", {
+			operation: "list",
+			calendarName,
+			limit: 1,
+		});
+		assert(
+			!byCalendarList?.isError,
+			`calendar.list failed for allowed calendar "${calendarName}": ${extractText(byCalendarList)}`,
+		);
+		assert(
+			byCalendarList?.operation === "list",
+			`calendar.list operation mismatch for allowed calendar "${calendarName}".`,
+		);
+		assertStructuredCalendarResult(byCalendarList, "list");
+
+		const byCalendarSearch = await callTool(url, 32, "calendar", {
+			operation: "search",
+			searchText: "",
+			calendarName,
+			limit: 1,
+		});
+		assert(
+			!byCalendarSearch?.isError,
+			`calendar.search failed for allowed calendar "${calendarName}": ${extractText(byCalendarSearch)}`,
+		);
+		assert(
+			byCalendarSearch?.operation === "search",
+			`calendar.search operation mismatch for allowed calendar "${calendarName}".`,
+		);
+		assertStructuredCalendarResult(byCalendarSearch, "search");
+	}
 
 	const disallowedList = await callTool(url, 4, "calendar", {
 		operation: "list",
@@ -259,6 +291,30 @@ async function run(): Promise<void> {
 	);
 	assert(disallowedDelete?.ok === false, "disallowed delete should include ok=false.");
 	assertStructuredCalendarResult(disallowedDelete, "delete");
+	if (deleteExposed && calendars.length > 1) {
+		const incomingCalendar = calendars[0];
+		const outgoingCalendar = calendars[calendars.length - 1];
+		if (
+			typeof incomingCalendar === "string" &&
+			typeof outgoingCalendar === "string" &&
+			incomingCalendar.toLowerCase() !== outgoingCalendar.toLowerCase()
+		) {
+			const incomingDeleteProbe = await callTool(url, 61, "calendar", {
+				operation: "delete",
+				eventId: "non-existent-event-id-for-incoming-delete-probe",
+				calendarName: incomingCalendar,
+			});
+			assert(
+				incomingDeleteProbe?.isError === true,
+				"Expected delete on incoming calendar to be blocked.",
+			);
+			assert(
+				extractText(incomingDeleteProbe).toLowerCase().includes("not writable"),
+				`Expected "not writable" on incoming delete probe ("${incomingCalendar}").`,
+			);
+			assertStructuredCalendarResult(incomingDeleteProbe, "delete");
+		}
+	}
 
 	const defaultList = await callTool(url, 7, "calendar", {
 		operation: "list",

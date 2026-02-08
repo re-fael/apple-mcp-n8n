@@ -135,6 +135,42 @@ describe("Calendar Integration Tests", () => {
       expect(events.length).toBeLessThanOrEqual(limit);
       console.log(`Requested ${limit} events, got ${events.length}`);
     }, 15000);
+
+    it("should read events from both allowed calendars when targeted explicitly", async () => {
+      const from = new Date();
+      const to = new Date();
+      to.setDate(to.getDate() + 30);
+
+      const incomingEvents = await runOrSkipUnavailable(
+        "getEvents(incoming calendar)",
+        () =>
+          calendarModule.getEvents(
+            5,
+            from.toISOString(),
+            to.toISOString(),
+            INCOMING_CALENDAR,
+          ),
+      );
+      if (incomingEvents === null) return;
+      expect(Array.isArray(incomingEvents)).toBe(true);
+
+      const outgoingEvents = await runOrSkipUnavailable(
+        "getEvents(outgoing calendar)",
+        () =>
+          calendarModule.getEvents(
+            5,
+            from.toISOString(),
+            to.toISOString(),
+            OUTGOING_CALENDAR,
+          ),
+      );
+      if (outgoingEvents === null) return;
+      expect(Array.isArray(outgoingEvents)).toBe(true);
+
+      console.log(
+        `✅ Explicit calendar reads succeeded (incoming=${incomingEvents.length}, outgoing=${outgoingEvents.length})`,
+      );
+    }, 20000);
   });
 
   describe("listCalendars", () => {
